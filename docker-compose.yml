@@ -1,0 +1,13 @@
+services:
+  repomonitor:
+    build: .
+    ports:
+      - "3000:3000"
+    env_file:
+      - .env
+    volumes:
+      - repomonitor-data:/app/data
+    restart: unless-stopped
+
+volumes:
+  repomonitor-data:

@@ -1,0 +1,1 @@
+This app isn't live yet, so do not generate migration scripts.
