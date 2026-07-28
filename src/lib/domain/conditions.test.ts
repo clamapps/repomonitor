@@ -2,9 +2,8 @@ import { describe, expect, it } from "vitest";
 
 import {
   buildSearchableText,
+  evaluateTrackedLine,
   lineChanged,
-  lineNotificationTriggers,
-  observeCapturedLine,
   textContains,
 } from "@/lib/domain/conditions";
 
@@ -55,80 +54,155 @@ describe("line conditions", () => {
     expect(lineChanged(null, null)).toBe(false);
   });
 
-  it("distinguishes exact, moved, substring, and removed content", () => {
-    expect(observeCapturedLine("target", "first\ntarget\nlast", 2)).toEqual({
-      lineContent: "target",
-      state: "EXACT",
+  it("tracks every relocation, including a move back to the original line", () => {
+    const moved = evaluateTrackedLine({
+      capturedContent: "target",
+      fileContent: "first\nreplacement\ntarget",
+      changedLineNumber: 2,
+      previousChangedLineContent: "target",
+      previousMovedLineNumber: 2,
+      previousRemovedLineNumber: 2,
+      notifyOnRemovedReadded: true,
+      notifyOnMoved: true,
+      notifyOnChanged: true,
     });
-    expect(observeCapturedLine("target", "target\nother", 2)).toEqual({
-      lineContent: "other",
-      state: "MOVED",
+    expect(moved).toMatchObject({
+      triggers: ["moved", "changed"],
+      changedLineContent: "replacement",
+      movedLineNumber: 3,
+      removedLineNumber: 3,
     });
-    expect(observeCapturedLine("target", "first\nprefix target suffix", 2)).toEqual(
-      {
-        lineContent: "prefix target suffix",
-        state: "MOVED",
-      },
-    );
-    expect(observeCapturedLine("target", "first\nother", 2)).toEqual({
-      lineContent: "other",
-      state: "REMOVED",
+
+    const movedAgain = evaluateTrackedLine({
+      capturedContent: "target",
+      fileContent: "first\nreplacement\nthird\ntarget",
+      changedLineNumber: 2,
+      previousChangedLineContent: moved.changedLineContent,
+      previousMovedLineNumber: moved.movedLineNumber,
+      previousRemovedLineNumber: moved.removedLineNumber,
+      notifyOnRemovedReadded: true,
+      notifyOnMoved: true,
+      notifyOnChanged: true,
     });
-    expect(observeCapturedLine("target", null, 2)).toEqual({
-      lineContent: null,
-      state: "REMOVED",
+    expect(movedAgain).toMatchObject({
+      triggers: ["moved"],
+      changedLineContent: "replacement",
+      movedLineNumber: 4,
+      removedLineNumber: 4,
+    });
+
+    const movedBack = evaluateTrackedLine({
+      capturedContent: "target",
+      fileContent: "first\ntarget\nreplacement",
+      changedLineNumber: 2,
+      previousChangedLineContent: movedAgain.changedLineContent,
+      previousMovedLineNumber: movedAgain.movedLineNumber,
+      previousRemovedLineNumber: movedAgain.removedLineNumber,
+      notifyOnRemovedReadded: true,
+      notifyOnMoved: true,
+      notifyOnChanged: true,
+    });
+    expect(movedBack).toMatchObject({
+      triggers: ["moved", "changed"],
+      changedLineContent: "target",
+      movedLineNumber: 2,
+      removedLineNumber: 2,
     });
   });
 
-  it("does not fire a removed-only condition while content exists elsewhere", () => {
-    expect(
-      lineNotificationTriggers({
-        previousLineContent: "target",
-        currentLineContent: "other",
-        previousState: "EXACT",
-        currentState: "MOVED",
-        notifyOnRemoved: true,
-        notifyOnMoved: false,
-        notifyOnChanged: false,
-      }),
-    ).toEqual([]);
+  it("keeps changed fixed to the original line while moved follows the capture", () => {
+    const evaluation = evaluateTrackedLine({
+      capturedContent: "target",
+      fileContent: "new original value\nother\ntarget",
+      changedLineNumber: 1,
+      previousChangedLineContent: "target",
+      previousMovedLineNumber: 1,
+      previousRemovedLineNumber: 1,
+      notifyOnRemovedReadded: false,
+      notifyOnMoved: true,
+      notifyOnChanged: true,
+    });
+
+    expect(evaluation.triggers).toEqual(["moved", "changed"]);
+    expect(evaluation.changedLineContent).toBe("new original value");
+    expect(evaluation.movedLineNumber).toBe(3);
   });
 
-  it("fires each selected transition without repeating a persistent state", () => {
-    expect(
-      lineNotificationTriggers({
-        previousLineContent: "target",
-        currentLineContent: "other",
-        previousState: "EXACT",
-        currentState: "MOVED",
-        notifyOnRemoved: true,
-        notifyOnMoved: true,
-        notifyOnChanged: true,
-      }),
-    ).toEqual(["moved", "changed"]);
+  it("alerts once when removed and again when readded, then tracks removal again", () => {
+    const removed = evaluateTrackedLine({
+      capturedContent: "target",
+      fileContent: "first\nother",
+      changedLineNumber: 2,
+      previousChangedLineContent: "target",
+      previousMovedLineNumber: 2,
+      previousRemovedLineNumber: 2,
+      notifyOnRemovedReadded: true,
+      notifyOnMoved: false,
+      notifyOnChanged: false,
+    });
+    expect(removed).toMatchObject({
+      triggers: ["removed"],
+      movedLineNumber: 2,
+      removedLineNumber: null,
+    });
 
-    expect(
-      lineNotificationTriggers({
-        previousLineContent: "other",
-        currentLineContent: "other",
-        previousState: "MOVED",
-        currentState: "MOVED",
-        notifyOnRemoved: true,
-        notifyOnMoved: true,
-        notifyOnChanged: true,
-      }),
-    ).toEqual([]);
+    const stillRemoved = evaluateTrackedLine({
+      capturedContent: "target",
+      fileContent: "first\nother",
+      changedLineNumber: 2,
+      previousChangedLineContent: removed.changedLineContent,
+      previousMovedLineNumber: removed.movedLineNumber,
+      previousRemovedLineNumber: removed.removedLineNumber,
+      notifyOnRemovedReadded: true,
+      notifyOnMoved: false,
+      notifyOnChanged: false,
+    });
+    expect(stillRemoved.triggers).toEqual([]);
 
-    expect(
-      lineNotificationTriggers({
-        previousLineContent: "other",
-        currentLineContent: "other",
-        previousState: "MOVED",
-        currentState: "REMOVED",
-        notifyOnRemoved: true,
-        notifyOnMoved: true,
-        notifyOnChanged: true,
-      }),
-    ).toEqual(["removed"]);
+    const readded = evaluateTrackedLine({
+      capturedContent: "target",
+      fileContent: "first\nother\nthird\ntarget",
+      changedLineNumber: 2,
+      previousChangedLineContent: stillRemoved.changedLineContent,
+      previousMovedLineNumber: stillRemoved.movedLineNumber,
+      previousRemovedLineNumber: stillRemoved.removedLineNumber,
+      notifyOnRemovedReadded: true,
+      notifyOnMoved: false,
+      notifyOnChanged: false,
+    });
+    expect(readded).toMatchObject({
+      triggers: ["readded"],
+      removedLineNumber: 4,
+    });
+
+    const removedAgain = evaluateTrackedLine({
+      capturedContent: "target",
+      fileContent: "first\nother\nthird",
+      changedLineNumber: 2,
+      previousChangedLineContent: readded.changedLineContent,
+      previousMovedLineNumber: readded.movedLineNumber,
+      previousRemovedLineNumber: readded.removedLineNumber,
+      notifyOnRemovedReadded: true,
+      notifyOnMoved: false,
+      notifyOnChanged: false,
+    });
+    expect(removedAgain.triggers).toEqual(["removed"]);
+  });
+
+  it("does not report removal while the captured content exists elsewhere", () => {
+    const evaluation = evaluateTrackedLine({
+      capturedContent: "target",
+      fileContent: "first\nother\nprefix target suffix",
+      changedLineNumber: 2,
+      previousChangedLineContent: "target",
+      previousMovedLineNumber: 2,
+      previousRemovedLineNumber: 2,
+      notifyOnRemovedReadded: true,
+      notifyOnMoved: false,
+      notifyOnChanged: false,
+    });
+
+    expect(evaluation.triggers).toEqual([]);
+    expect(evaluation.removedLineNumber).toBe(3);
   });
 });

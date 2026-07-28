@@ -107,7 +107,7 @@ export function LineConditionForm({
         <legend>Notify me if the captured line is</legend>
         <label>
           <input type="checkbox" name="notifyOnRemoved" defaultChecked />
-          Removed
+          Removed/readded
         </label>
         <label>
           <input type="checkbox" name="notifyOnMoved" defaultChecked />

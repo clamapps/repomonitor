@@ -16,13 +16,15 @@ import { randomUUID } from "node:crypto";
 import { config } from "@/lib/config";
 import { db } from "@/lib/db";
 import {
-  describeLine,
-  lineNotificationTriggers,
-  observeCapturedLine,
-  textContains,
+  evaluateTrackedLine,
   TextEventMaterial,
 } from "@/lib/domain/conditions";
 import { escapeHtml } from "@/lib/email/message";
+import {
+  buildRepositoryNotificationEmail,
+  serializeNotificationPayload,
+  textMatchContexts,
+} from "@/lib/email/notification";
 import { sendEmail } from "@/lib/email/sender";
 import {
   compareCommits,
@@ -109,6 +111,7 @@ async function queueTextMatches(
   conditions: Condition[],
   eventKey: string,
   eventType: EventType,
+  subjectTitle: string,
   title: string,
   url: string,
   material: TextEventMaterial,
@@ -117,18 +120,28 @@ async function queueTextMatches(
   for (const condition of conditions) {
     if (
       condition.type !== ConditionType.TEXT_CONTAINS ||
-      !condition.textPattern ||
-      !textContains(condition.textPattern, material)
+      !condition.textPattern
     ) {
       continue;
     }
+    const pattern = condition.textPattern.trim();
+    const matches = textMatchContexts(pattern, eventType, material);
+    if (matches.length === 0) continue;
     const created = await createNotification(
       condition.id,
       eventKey,
       eventType,
       title,
       url,
-      `Matched text “${condition.textPattern}”.`,
+      serializeNotificationPayload({
+        version: 1,
+        subjectTitle,
+        condition: {
+          kind: "text",
+          pattern,
+          matches,
+        },
+      }),
     );
     if (created) queued += 1;
   }
@@ -142,8 +155,10 @@ async function evaluateLineConditions(
   commitSha: string,
   eventKey: string,
   eventType: EventType,
+  subjectTitle: string,
   title: string,
   url: string,
+  files: ReturnType<typeof fileMaterial>,
 ): Promise<number> {
   let queued = 0;
   for (const condition of conditions) {
@@ -162,27 +177,49 @@ async function evaluateLineConditions(
       condition.filePath,
       commitSha,
     );
-    const observation = observeCapturedLine(
-      condition.baselineLineContent,
+    const previousChangedLine = condition.lastObservedLineContent;
+    const previousMovedLineNumber =
+      condition.movedLineNumber ?? condition.lineNumber;
+    const previousRemovedLineNumber =
+      condition.removedLineNumber ??
+      (condition.lastObservedLineState === "REMOVED"
+        ? null
+        : condition.lineNumber);
+    const evaluation = evaluateTrackedLine({
+      capturedContent: condition.baselineLineContent,
       fileContent,
-      condition.lineNumber,
-    );
-    const previous = condition.lastObservedLineContent;
-    const triggers = lineNotificationTriggers({
-      previousLineContent: previous,
-      currentLineContent: observation.lineContent,
-      previousState: condition.lastObservedLineState ?? "EXACT",
-      currentState: observation.state,
-      notifyOnRemoved: condition.notifyOnRemoved,
+      changedLineNumber: condition.lineNumber,
+      previousChangedLineContent: previousChangedLine,
+      previousMovedLineNumber,
+      previousRemovedLineNumber,
+      notifyOnRemovedReadded: condition.notifyOnRemoved,
       notifyOnMoved: condition.notifyOnMoved,
       notifyOnChanged: condition.notifyOnChanged,
     });
-    if (triggers.length > 0) {
-      const triggerDescription =
-        triggers.length === 1
-          ? triggers[0]
-          : `${triggers.slice(0, -1).join(", ")} and ${triggers.at(-1)}`;
-      const summary = `Line alert for ${condition.filePath}:${condition.lineNumber} (${triggerDescription}). Captured “${describeLine(condition.baselineLineContent)}”; current numbered line “${describeLine(observation.lineContent)}”.`;
+    if (evaluation.triggers.length > 0) {
+      const patch = files.find(
+        (file) =>
+          file.filename === condition.filePath ||
+          file.previousFilename === condition.filePath,
+      )?.patch;
+      const summary = serializeNotificationPayload({
+        version: 1,
+        subjectTitle,
+        condition: {
+          kind: "line",
+          triggers: evaluation.triggers,
+          filePath: condition.filePath,
+          lineNumber: condition.lineNumber,
+          capturedLine: condition.baselineLineContent,
+          previousLine: previousChangedLine,
+          currentLine: evaluation.changedLineContent,
+          previousMovedLineNumber,
+          currentMovedLineNumber: evaluation.movedLineNumber,
+          previousRemovedLineNumber,
+          currentRemovedLineNumber: evaluation.removedLineNumber,
+          ...(patch ? { patch } : {}),
+        },
+      });
       const created = await createNotification(
         condition.id,
         eventKey,
@@ -197,13 +234,17 @@ async function evaluateLineConditions(
       where: { id: condition.id },
       data: {
         lastObservedCommitSha: commitSha,
-        lastObservedLineContent: observation.lineContent,
-        lastObservedLineState: observation.state,
+        lastObservedLineContent: evaluation.changedLineContent,
+        lastObservedLineState: evaluation.state,
+        movedLineNumber: evaluation.movedLineNumber,
+        removedLineNumber: evaluation.removedLineNumber,
       },
     });
     condition.lastObservedCommitSha = commitSha;
-    condition.lastObservedLineContent = observation.lineContent;
-    condition.lastObservedLineState = observation.state;
+    condition.lastObservedLineContent = evaluation.changedLineContent;
+    condition.lastObservedLineState = evaluation.state;
+    condition.movedLineNumber = evaluation.movedLineNumber;
+    condition.removedLineNumber = evaluation.removedLineNumber;
   }
   return queued;
 }
@@ -279,15 +320,17 @@ async function pollCommits(work: CursorWork, token: string): Promise<number> {
     const firstLine = detail.commit.message.split("\n")[0] ?? shortSha;
     const title = `${repository.fullName}: ${firstLine}`;
     const eventKey = `commit:${detail.sha}`;
+    const files = fileMaterial(detail.files);
     queued += await queueTextMatches(
       conditions,
       eventKey,
       EventType.COMMIT,
+      firstLine,
       title,
       detail.html_url,
       {
         title: detail.commit.message,
-        files: fileMaterial(detail.files),
+        files,
       },
     );
     queued += await evaluateLineConditions(
@@ -297,8 +340,10 @@ async function pollCommits(work: CursorWork, token: string): Promise<number> {
       detail.sha,
       eventKey,
       EventType.COMMIT,
+      firstLine,
       title,
       detail.html_url,
+      files,
     );
   }
   await markCursorSuccess(work, head.sha, head.sha);
@@ -341,21 +386,24 @@ async function pollReleases(work: CursorWork, token: string): Promise<number> {
         releaseCommit.sha,
       ).catch(() => undefined);
     }
-    const title = `${repository.fullName} released ${release.name || release.tag_name}`;
+    const releaseTitle = release.name || release.tag_name;
+    const title = `${repository.fullName} released ${releaseTitle}`;
     const eventKey = `release:${release.id}`;
+    const files = fileMaterial(comparison?.files);
     queued += await queueTextMatches(
       conditions,
       eventKey,
       EventType.RELEASE,
+      releaseTitle,
       title,
       release.html_url,
       {
-        title: release.name || release.tag_name,
+        title: releaseTitle,
         body: release.body,
         commitMessages: comparison?.commits.map(
           (commit) => commit.commit.message,
         ),
-        files: fileMaterial(comparison?.files),
+        files,
       },
     );
     queued += await evaluateLineConditions(
@@ -365,8 +413,10 @@ async function pollReleases(work: CursorWork, token: string): Promise<number> {
       releaseCommit.sha,
       eventKey,
       EventType.RELEASE,
+      releaseTitle,
       title,
       release.html_url,
+      files,
     );
     cursor = String(release.id);
     previousCommit = releaseCommit.sha;
@@ -507,24 +557,68 @@ async function deliverNotifications(): Promise<number> {
     },
   });
   let sent = 0;
-  for (const notification of pending) {
-    const claimed = await db.notification.updateMany({
+  const processedGroups = new Set<string>();
+  for (const pendingNotification of pending) {
+    const pendingSubscription =
+      pendingNotification.condition.subscriptionEvent.subscription;
+    const groupKey = `${pendingSubscription.userId}:${pendingSubscription.repositoryId}`;
+    if (processedGroups.has(groupKey)) continue;
+    processedGroups.add(groupKey);
+
+    const batch = await db.notification.findMany({
       where: {
-        id: notification.id,
         status: NotificationStatus.PENDING,
+        condition: {
+          subscriptionEvent: {
+            subscription: {
+              userId: pendingSubscription.userId,
+              repositoryId: pendingSubscription.repositoryId,
+            },
+          },
+        },
       },
-      data: {
-        status: NotificationStatus.SENDING,
-        attempts: { increment: 1 },
+      orderBy: { createdAt: "asc" },
+      include: {
+        condition: {
+          include: {
+            subscriptionEvent: {
+              include: {
+                subscription: {
+                  include: {
+                    user: { include: { notificationEmail: true } },
+                    repository: true,
+                  },
+                },
+              },
+            },
+          },
+        },
       },
     });
-    if (claimed.count !== 1) continue;
+    const claimed = [];
+    for (const notification of batch) {
+      const result = await db.notification.updateMany({
+        where: {
+          id: notification.id,
+          status: NotificationStatus.PENDING,
+        },
+        data: {
+          status: NotificationStatus.SENDING,
+          attempts: { increment: 1 },
+        },
+      });
+      if (result.count === 1) claimed.push(notification);
+    }
+    if (claimed.length === 0) continue;
 
-    const subscription = notification.condition.subscriptionEvent.subscription;
+    const subscription = claimed[0].condition.subscriptionEvent.subscription;
     const address = subscription.user.notificationEmail;
     if (!address?.verifiedAt) {
-      await db.notification.update({
-        where: { id: notification.id },
+      await db.notification.updateMany({
+        where: {
+          id: { in: claimed.map((notification) => notification.id) },
+          status: NotificationStatus.SENDING,
+        },
         data: {
           status: NotificationStatus.FAILED,
           lastError: "No verified notification email is selected",
@@ -540,14 +634,19 @@ async function deliverNotifications(): Promise<number> {
     try {
       const repository = subscription.repository;
       const settingsUrl = `${config().APP_URL}/settings`;
-      await sendEmail({
-        to: address.email,
-        subject: `[RepoMonitor] ${notification.eventTitle}`,
-        text: `${notification.summary}\n\nRepository: ${repository.fullName}\nEvent: ${notification.eventUrl}\n\nNotification settings: ${settingsUrl}`,
-        html: `<p>${escapeHtml(notification.summary)}</p><p><strong>Repository:</strong> ${escapeHtml(repository.fullName)}</p><p><a href="${escapeHtml(notification.eventUrl)}">View on GitHub</a></p><p><a href="${escapeHtml(settingsUrl)}">Notification settings</a></p>`,
-      });
-      await db.notification.update({
-        where: { id: notification.id },
+      await sendEmail(
+        buildRepositoryNotificationEmail({
+          to: address.email,
+          repositoryFullName: repository.fullName,
+          settingsUrl,
+          notifications: claimed,
+        }),
+      );
+      await db.notification.updateMany({
+        where: {
+          id: { in: claimed.map((notification) => notification.id) },
+          status: NotificationStatus.SENDING,
+        },
         data: {
           status: NotificationStatus.SENT,
           sentAt: new Date(),
@@ -556,20 +655,23 @@ async function deliverNotifications(): Promise<number> {
       });
       sent += 1;
     } catch (error) {
-      const attempts = notification.attempts + 1;
-      await db.notification.update({
-        where: { id: notification.id },
-        data: {
-          status:
-            attempts >= 3
-              ? NotificationStatus.FAILED
-              : NotificationStatus.PENDING,
-          lastError: (error instanceof Error ? error.message : String(error)).slice(
-            0,
-            1000,
-          ),
-        },
-      });
+      const lastError = (
+        error instanceof Error ? error.message : String(error)
+      ).slice(0, 1000);
+      await db.$transaction(
+        claimed.map((notification) =>
+          db.notification.update({
+            where: { id: notification.id },
+            data: {
+              status:
+                notification.attempts + 1 >= 3
+                  ? NotificationStatus.FAILED
+                  : NotificationStatus.PENDING,
+              lastError,
+            },
+          }),
+        ),
+      );
     }
   }
   return sent;

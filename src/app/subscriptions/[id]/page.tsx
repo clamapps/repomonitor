@@ -7,6 +7,7 @@ import { Flash } from "@/app/_components/flash";
 import { Header } from "@/app/_components/header";
 import { AddConditionMenu } from "@/app/subscriptions/[id]/_components/add-condition-menu";
 import { LineConditionForm } from "@/app/subscriptions/[id]/_components/line-condition-form";
+import { LocalSentAt } from "@/app/subscriptions/[id]/_components/local-sent-at";
 import { requireUser } from "@/lib/auth/session";
 import { db } from "@/lib/db";
 
@@ -27,7 +28,7 @@ function lineTriggerNames(condition: {
   notifyOnChanged: boolean;
 }) {
   return [
-    condition.notifyOnRemoved ? "removed" : null,
+    condition.notifyOnRemoved ? "removed/readded" : null,
     condition.notifyOnMoved ? "moved" : null,
     condition.notifyOnChanged ? "changed" : null,
   ]
@@ -242,7 +243,16 @@ export default async function SubscriptionPage({
                     <div className="condition-activity">
                       {condition.notifications[0] ? (
                         <>
-                          <strong>{condition.notifications[0].status}</strong>
+                          <strong>
+                            {condition.notifications[0].status === "SENT" &&
+                            condition.notifications[0].sentAt ? (
+                              <LocalSentAt
+                                sentAt={condition.notifications[0].sentAt.toISOString()}
+                              />
+                            ) : (
+                              condition.notifications[0].status
+                            )}
+                          </strong>
                           <span>
                             {condition.notifications[0].eventTitle}
                           </span>

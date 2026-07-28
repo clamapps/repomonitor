@@ -158,6 +158,8 @@ model Condition {
   lastObservedCommitSha   String?
   lastObservedLineContent String?
   lastObservedLineState   LineMatchState?
+  movedLineNumber         Int?
+  removedLineNumber       Int?
   notifyOnRemoved         Boolean           @default(true)
   notifyOnMoved           Boolean           @default(true)
   notifyOnChanged         Boolean           @default(true)

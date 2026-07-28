@@ -432,6 +432,8 @@ export async function addCondition(
         lastObservedCommitSha: commit.sha,
         lastObservedLineContent: content,
         lastObservedLineState: LineMatchState.EXACT,
+        movedLineNumber: line.lineNumber,
+        removedLineNumber: line.lineNumber,
         notifyOnRemoved,
         notifyOnMoved,
         notifyOnChanged,

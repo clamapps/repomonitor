@@ -103,6 +103,8 @@ CREATE TABLE "Condition" (
     "lastObservedCommitSha" TEXT,
     "lastObservedLineContent" TEXT,
     "lastObservedLineState" TEXT,
+    "movedLineNumber" INTEGER,
+    "removedLineNumber" INTEGER,
     "notifyOnRemoved" BOOLEAN NOT NULL DEFAULT true,
     "notifyOnMoved" BOOLEAN NOT NULL DEFAULT true,
     "notifyOnChanged" BOOLEAN NOT NULL DEFAULT true,

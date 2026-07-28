@@ -43,16 +43,21 @@ pasting a GitHub `blob` URL with a line anchor such as `#L142`.
 
 Line conditions have three notification triggers, all enabled by default:
 
-- **Removed** — the captured content no longer appears anywhere in the file.
-- **Moved** — the captured content is no longer the exact numbered line but
-  still appears elsewhere, including as a substring within another line.
+- **Removed/readded** — alerts when the captured content stops appearing
+  anywhere in the file and again when it reappears. Its current location is
+  updated whenever the content is present.
+- **Moved** — alerts whenever the captured content relocates from its last
+  tracked line, including when it moves back to the line captured during setup.
+  Exact-line matches are preferred, with substring matches used as a fallback.
 - **Changed** — the content at the numbered line differs from the preceding
-  observation.
+  observation. This always monitors the original line number, independently of
+  the moving and removed/readded location trackers.
 
 Each new commit or release resolves to a commit SHA and fetches the whole file
-so these states can be distinguished. The latest observed value and match state
-are saved to prevent repeated notifications when nothing changes. The original
-baseline remains stored for audit context.
+so these states can be distinguished. The latest value at the original line,
+the latest moved location, and the current removed/readded location are saved
+after every observation. The original baseline remains stored for audit
+context.
 
 For releases, RepoMonitor resolves the release tag to its commit and compares
 that commit with the preceding release commit. This makes both line and text

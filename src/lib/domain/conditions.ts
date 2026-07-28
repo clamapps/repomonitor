@@ -42,75 +42,146 @@ export function lineChanged(
 }
 
 export type LineMatchState = "EXACT" | "MOVED" | "REMOVED";
-export type LineNotificationTrigger = "removed" | "moved" | "changed";
+export type LineNotificationTrigger =
+  | "removed"
+  | "readded"
+  | "moved"
+  | "changed";
 
-export function observeCapturedLine(
+type CapturedLineLocation = {
+  lineNumber: number;
+  exact: boolean;
+};
+
+function capturedLineLocations(
   capturedContent: string,
-  fileContent: string | null,
-  lineNumber: number,
-): { lineContent: string | null; state: LineMatchState } {
-  const lines = fileContent === null ? [] : fileContent.split(/\r?\n/);
-  const lineContent = lines[lineNumber - 1] ?? null;
-
-  if (lineContent === capturedContent) {
-    return { lineContent, state: "EXACT" };
+  lines: string[],
+): CapturedLineLocation[] {
+  const locations: CapturedLineLocation[] = [];
+  for (const [index, line] of lines.entries()) {
+    const matches =
+      capturedContent === ""
+        ? line === capturedContent
+        : line.includes(capturedContent);
+    if (matches) {
+      locations.push({
+        lineNumber: index + 1,
+        exact: line === capturedContent,
+      });
+    }
   }
-
-  const capturedContentExists = lines.some((line) =>
-    capturedContent === ""
-      ? line === capturedContent
-      : line.includes(capturedContent),
-  );
-
-  return {
-    lineContent,
-    state: capturedContentExists ? "MOVED" : "REMOVED",
-  };
+  return locations;
 }
 
-export function lineNotificationTriggers({
-  previousLineContent,
-  currentLineContent,
-  previousState,
-  currentState,
-  notifyOnRemoved,
+function nearestLineNumber(
+  locations: CapturedLineLocation[],
+  preferredLineNumber: number,
+): number | null {
+  if (locations.length === 0) return null;
+
+  const exactLocations = locations.filter((location) => location.exact);
+  const candidates = exactLocations.length > 0 ? exactLocations : locations;
+  if (
+    candidates.some(
+      (location) => location.lineNumber === preferredLineNumber,
+    )
+  ) {
+    return preferredLineNumber;
+  }
+
+  return [...candidates].sort(
+    (left, right) =>
+      Math.abs(left.lineNumber - preferredLineNumber) -
+        Math.abs(right.lineNumber - preferredLineNumber) ||
+      left.lineNumber - right.lineNumber,
+  )[0].lineNumber;
+}
+
+export type TrackedLineEvaluation = {
+  triggers: LineNotificationTrigger[];
+  changedLineContent: string | null;
+  movedLineNumber: number;
+  removedLineNumber: number | null;
+  state: LineMatchState;
+};
+
+export function evaluateTrackedLine({
+  capturedContent,
+  fileContent,
+  changedLineNumber,
+  previousChangedLineContent,
+  previousMovedLineNumber,
+  previousRemovedLineNumber,
+  notifyOnRemovedReadded,
   notifyOnMoved,
   notifyOnChanged,
 }: {
-  previousLineContent: string | null;
-  currentLineContent: string | null;
-  previousState: LineMatchState;
-  currentState: LineMatchState;
-  notifyOnRemoved: boolean;
+  capturedContent: string;
+  fileContent: string | null;
+  changedLineNumber: number;
+  previousChangedLineContent: string | null;
+  previousMovedLineNumber: number;
+  previousRemovedLineNumber: number | null;
+  notifyOnRemovedReadded: boolean;
   notifyOnMoved: boolean;
   notifyOnChanged: boolean;
-}): LineNotificationTrigger[] {
+}): TrackedLineEvaluation {
+  const lines = fileContent === null ? [] : fileContent.split(/\r?\n/);
+  const changedLineContent = lines[changedLineNumber - 1] ?? null;
+  const locations = capturedLineLocations(capturedContent, lines);
+  const currentMovedLineNumber = nearestLineNumber(
+    locations,
+    previousMovedLineNumber,
+  );
+  const currentRemovedLineNumber =
+    locations.length === 0
+      ? null
+      : nearestLineNumber(
+          locations,
+          previousRemovedLineNumber ??
+            currentMovedLineNumber ??
+            changedLineNumber,
+        );
   const triggers: LineNotificationTrigger[] = [];
 
   if (
-    notifyOnRemoved &&
-    currentState === "REMOVED" &&
-    previousState !== "REMOVED"
+    notifyOnRemovedReadded &&
+    previousRemovedLineNumber !== null &&
+    currentRemovedLineNumber === null
   ) {
     triggers.push("removed");
   }
   if (
+    notifyOnRemovedReadded &&
+    previousRemovedLineNumber === null &&
+    currentRemovedLineNumber !== null
+  ) {
+    triggers.push("readded");
+  }
+  if (
     notifyOnMoved &&
-    currentState === "MOVED" &&
-    previousState !== "MOVED"
+    currentMovedLineNumber !== null &&
+    currentMovedLineNumber !== previousMovedLineNumber
   ) {
     triggers.push("moved");
   }
   if (
     notifyOnChanged &&
-    lineChanged(previousLineContent, currentLineContent)
+    lineChanged(previousChangedLineContent, changedLineContent)
   ) {
     triggers.push("changed");
   }
 
-  return triggers;
-}
-
-export function describeLine(value: string | null): string {
-  return value === null ? "(file or line does not exist)" : value;
+  return {
+    triggers,
+    changedLineContent,
+    movedLineNumber: currentMovedLineNumber ?? previousMovedLineNumber,
+    removedLineNumber: currentRemovedLineNumber,
+    state:
+      currentRemovedLineNumber === null
+        ? "REMOVED"
+        : lines[changedLineNumber - 1] === capturedContent
+          ? "EXACT"
+          : "MOVED",
+  };
 }
