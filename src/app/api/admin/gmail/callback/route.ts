@@ -6,11 +6,10 @@ import { db } from "@/lib/db";
 import { clearGoogleAccessTokenCache } from "@/lib/email/sender";
 
 function settingsRedirect(
-  request: Request,
   key: "notice" | "error",
   value: string,
 ) {
-  const target = new URL("/settings", request.url);
+  const target = new URL("/settings", config().APP_URL);
   target.searchParams.set(key, value);
   return Response.redirect(target, 303);
 }
@@ -20,12 +19,11 @@ export async function GET(request: Request) {
   const url = new URL(request.url);
   const state = await consumeOAuthState("google", url.searchParams.get("state"));
   if (!state?.email) {
-    return settingsRedirect(request, "error", "Google authorization expired");
+    return settingsRedirect("error", "Google authorization expired");
   }
   const code = url.searchParams.get("code");
   if (!code) {
     return settingsRedirect(
-      request,
       "error",
       url.searchParams.get("error_description") ?? "Google authorization failed",
     );
@@ -49,7 +47,6 @@ export async function GET(request: Request) {
   };
   if (!tokenResponse.ok || !token.access_token || !token.refresh_token) {
     return settingsRedirect(
-      request,
       "error",
       token.error_description ??
         "Google did not return offline access. Please authorize again.",
@@ -70,7 +67,6 @@ export async function GET(request: Request) {
     profile.email?.toLowerCase() !== state.email.toLowerCase()
   ) {
     return settingsRedirect(
-      request,
       "error",
       "The authorized Google account did not match the requested sender",
     );
@@ -91,7 +87,6 @@ export async function GET(request: Request) {
   });
   clearGoogleAccessTokenCache();
   return settingsRedirect(
-    request,
     "notice",
     `Google sender connected as ${profile.email}`,
   );

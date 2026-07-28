@@ -22,8 +22,8 @@ type TokenResponse = {
   error_description?: string;
 };
 
-function authError(request: Request, message: string): Response {
-  const target = new URL("/", request.url);
+function authError(message: string): Response {
+  const target = new URL("/", config().APP_URL);
   target.searchParams.set("error", message);
   return Response.redirect(target, 303);
 }
@@ -31,12 +31,12 @@ function authError(request: Request, message: string): Response {
 export async function GET(request: Request) {
   const url = new URL(request.url);
   const state = await consumeOAuthState("github", url.searchParams.get("state"));
-  if (!state) return authError(request, "GitHub sign-in expired. Please try again.");
+  if (!state) return authError("GitHub sign-in expired. Please try again.");
 
   const oauthError = url.searchParams.get("error_description");
-  if (oauthError) return authError(request, oauthError);
+  if (oauthError) return authError(oauthError);
   const code = url.searchParams.get("code");
-  if (!code) return authError(request, "GitHub did not return an authorization code.");
+  if (!code) return authError("GitHub did not return an authorization code.");
 
   const response = await fetch("https://github.com/login/oauth/access_token", {
     method: "POST",
@@ -54,7 +54,6 @@ export async function GET(request: Request) {
   const token = (await response.json()) as TokenResponse;
   if (!response.ok || !token.access_token) {
     return authError(
-      request,
       token.error_description ?? token.error ?? "GitHub sign-in failed.",
     );
   }
@@ -152,7 +151,7 @@ export async function GET(request: Request) {
 
   await createSession(user.id);
   return Response.redirect(
-    new URL(safeReturnTo(state.returnTo ?? null, "/"), request.url),
+    new URL(safeReturnTo(state.returnTo ?? null, "/"), config().APP_URL),
     303,
   );
 }

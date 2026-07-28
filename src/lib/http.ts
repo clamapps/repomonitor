@@ -19,12 +19,12 @@ export function safeReturnTo(value: string | null, fallback = "/"): string {
 }
 
 export function redirectWithMessage(
-  request: Request,
+  _request: Request,
   path: string,
   key: "notice" | "error",
   message: string,
 ): Response {
-  const url = new URL(path, request.url);
+  const url = new URL(path, config().APP_URL);
   url.searchParams.set(key, message);
   return Response.redirect(url, 303);
 }
