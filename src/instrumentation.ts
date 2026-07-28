@@ -9,10 +9,12 @@ export async function register() {
   const { runPollingCycle } = await import("@/lib/polling/run");
   cron.schedule(
     process.env.POLL_CRON || "17 3 * * *",
-    () => {
-      void runPollingCycle("scheduled").catch((error) => {
+    async () => {
+      try {
+        await runPollingCycle("scheduled");
+      } catch (error) {
         console.error("Scheduled repository poll failed", error);
-      });
+      }
     },
     {
       timezone: process.env.POLL_TIMEZONE || "UTC",

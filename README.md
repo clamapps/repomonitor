@@ -221,6 +221,52 @@ The container includes a sendmail-compatible command, but production operators
 must configure its mail transfer route or connect Gmail in the super-admin
 settings.
 
+### Build and publish the image
+
+Build a local image for the current machine:
+
+```sh
+pnpm docker:build
+```
+
+This tags the image as `ghcr.io/clamapps/repomonitor:latest`. To publish it,
+create a GitHub personal access token (classic) with `write:packages`, then log
+Docker in to GitHub Container Registry:
+
+```sh
+export CR_PAT=YOUR_TOKEN
+printf '%s' "$CR_PAT" | docker login ghcr.io -u YOUR_GITHUB_USERNAME --password-stdin
+```
+
+Build and publish a multi-platform image for Linux AMD64 and ARM64:
+
+```sh
+pnpm docker:publish
+```
+
+The image name, tag, and target platforms can be overridden when needed:
+
+```sh
+DOCKER_TAG=0.1.0 pnpm docker:publish
+DOCKER_IMAGE=ghcr.io/another-owner/repomonitor pnpm docker:publish
+DOCKER_PLATFORMS=linux/amd64 pnpm docker:publish
+```
+
+See GitHub's
+[Container registry documentation](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry)
+for token, package permission, and visibility details.
+
+### Automated x64 image
+
+The GitHub Actions workflow in `.github/workflows/docker.yml` builds
+`linux/amd64` images only when commits are pushed to `main`. Each successful
+build publishes `latest` and `sha-<commit>` tags to
+`ghcr.io/clamapps/repomonitor`.
+
+Publishing uses the workflow's built-in `GITHUB_TOKEN`; no registry secret is
+required. The repository grants the job only `contents: read` and
+`packages: write` permissions.
+
 ## Development
 
 ```sh

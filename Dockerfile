@@ -9,6 +9,9 @@ WORKDIR /app
 
 FROM base AS deps
 COPY package.json pnpm-lock.yaml* pnpm-workspace.yaml ./
+COPY patches ./patches
+COPY prisma/schema.prisma ./prisma/schema.prisma
+COPY prisma.config.ts ./
 RUN pnpm install --frozen-lockfile
 
 FROM deps AS build
@@ -22,6 +25,7 @@ FROM base AS runner
 ENV NODE_ENV=production
 ENV HOSTNAME=0.0.0.0
 ENV PORT=3000
+LABEL org.opencontainers.image.source="https://github.com/clamapps/repomonitor"
 WORKDIR /app
 RUN apt-get update \
   && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends sendmail-bin \
