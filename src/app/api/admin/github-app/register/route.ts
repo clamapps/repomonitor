@@ -1,7 +1,8 @@
 import { createOAuthState } from "@/lib/auth/oauth-state";
 import { requireRouteAdmin } from "@/lib/auth/session";
+import { isProduction } from "@/lib/config";
 import { githubAppManifest } from "@/lib/github/app";
-import { assertSameOrigin } from "@/lib/http";
+import { assertSameOrigin, redirectWithMessage } from "@/lib/http";
 
 function escapeAttribute(value: string): string {
   return value
@@ -14,6 +15,14 @@ function escapeAttribute(value: string): string {
 export async function POST(request: Request) {
   assertSameOrigin(request);
   await requireRouteAdmin();
+  if (!isProduction()) {
+    return redirectWithMessage(
+      request,
+      "/settings",
+      "error",
+      "GitHub App registration is disabled in development. Public repositories use anonymous REST polling.",
+    );
+  }
   const state = await createOAuthState("github-app-manifest", {
     returnTo: "/settings",
   });

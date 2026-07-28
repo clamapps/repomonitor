@@ -38,11 +38,21 @@ reference:
   branch when no release exists
 
 It stores the resolved commit SHA and the exact content of the selected
-one-based line. Each new commit or release resolves to a commit SHA and fetches
-that line again. A changed value, deleted line/file, or newly created line is a
-match. The latest observed value is then saved so later notifications describe
-the change from the preceding observation. The original baseline remains stored
-for audit context.
+one-based line. A file path and line can be entered manually, or populated by
+pasting a GitHub `blob` URL with a line anchor such as `#L142`.
+
+Line conditions have three notification triggers, all enabled by default:
+
+- **Removed** — the captured content no longer appears anywhere in the file.
+- **Moved** — the captured content is no longer the exact numbered line but
+  still appears elsewhere, including as a substring within another line.
+- **Changed** — the content at the numbered line differs from the preceding
+  observation.
+
+Each new commit or release resolves to a commit SHA and fetches the whole file
+so these states can be distinguished. The latest observed value and match state
+are saved to prevent repeated notifications when nothing changes. The original
+baseline remains stored for audit context.
 
 For releases, RepoMonitor resolves the release tag to its commit and compares
 that commit with the preceding release commit. This makes both line and text
@@ -89,6 +99,10 @@ tokens unreadable.
 ### GitHub OAuth
 
 Set `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET` for a normal GitHub OAuth App.
+See [GitHub authentication setup](docs/github-authentication.md) for the exact
+registration fields, callback URLs, Device Flow setting, and public-polling
+GitHub App options.
+
 At sign-in, users choose one of two grants:
 
 - public only: `read:user` and `user:email`
@@ -109,7 +123,13 @@ sender, and manual poll controls.
 
 ### Public polling GitHub App
 
-After signing in as a super-admin, open Settings:
+Development mode deliberately does not register or authorize a GitHub App:
+GitHub requires the manifest's webhook URL to be reachable over the public
+Internet, even though RepoMonitor disables webhook delivery. Public
+repositories are therefore polled anonymously in development, using GitHub's
+60-request-per-hour limit for the server IP.
+
+In production, after signing in as a super-admin, open Settings:
 
 1. Select **Register GitHub App**. RepoMonitor uses GitHub's manifest flow to
    create an app with no repository permissions and no active webhooks.
@@ -139,6 +159,10 @@ The app requests offline access plus the minimal `gmail.send` scope and stores
 the refresh token encrypted. Removing the Google sender immediately returns
 delivery to sendmail.
 
+See [Google API and Gmail sender setup](docs/google-api-setup.md) for the exact
+Google Cloud project, audience, scopes, OAuth client, callback, and test-user
+configuration.
+
 `EMAIL_DELAY_MIN_MS` and `EMAIL_DELAY_MAX_MS` define a random delay before each
 queued notification. Failed deliveries retry up to three polling cycles.
 
@@ -151,10 +175,11 @@ POLL_CRON=17 3 * * *
 POLL_TIMEZONE=UTC
 ```
 
-Public polling state belongs to a repository and event type. The worker uses the
-configured GitHub App user token once for that stream, then evaluates all active
-public subscribers' conditions without refetching it. Public repositories never
-need to be selected in a GitHub App installation.
+Public polling state belongs to a repository and event type. In development,
+the worker uses anonymous REST requests; in production, it uses the configured
+GitHub App user token. It fetches each shared stream once, then evaluates all
+active public subscribers' conditions without refetching it. Public repositories
+never need to be selected in a GitHub App installation.
 
 Private polling state belongs to a subscription and event type. Each private
 subscriber is polled independently with that user's OAuth token. Tokens are
@@ -166,7 +191,9 @@ repository; a private failure pauses only the affected user's subscription. The
 worker does not retry paused subscriptions automatically. It displays the error,
 queues an email alert, and provides a **Retry repository access** action.
 Rate-limit responses, server failures, and network errors remain transient and
-are retried on the next polling cycle.
+are retried on the next polling cycle. The REST client budgets 60 anonymous
+requests per hour and 5,000 authenticated requests per credential by default,
+then follows GitHub's rate-limit limit, remaining, reset, and retry headers.
 
 The current worker supports up to 1,000 commits or releases between checks and
 uses the patches GitHub returns (GitHub can omit patches for binary or very

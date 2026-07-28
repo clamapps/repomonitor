@@ -1,16 +1,17 @@
 import "server-only";
 
-import { ConditionType, EventType } from "@prisma/client";
+import { ConditionType, EventType, LineMatchState } from "@prisma/client";
 import { z } from "zod";
 
 import { db } from "@/lib/db";
+import { parseGitHubPermalink } from "@/lib/domain/github-permalink";
 import {
   getCommit,
   getFileLine,
   getLatestRelease,
   getRepository,
 } from "@/lib/github/client";
-import { withGitHubAppToken } from "@/lib/github/app";
+import { withPublicRepositoryToken } from "@/lib/github/app";
 import {
   withPrivateRepositoryToken,
   withUserGitHubToken,
@@ -57,7 +58,7 @@ async function withRepositoryReadToken<T>(
 ): Promise<T> {
   return isPrivate
     ? withPrivateRepositoryToken(userId, operation)
-    : withGitHubAppToken(operation);
+    : withPublicRepositoryToken(operation);
 }
 
 export async function createSubscription(
@@ -309,7 +310,14 @@ export async function addCondition(
   subscriptionId: string,
   eventType: EventType,
   conditionType: ConditionType,
-  values: { textPattern?: string; filePath?: string; lineNumber?: string },
+  values: {
+    textPattern?: string;
+    filePath?: string;
+    lineNumber?: string;
+    notifyOnRemoved?: string;
+    notifyOnMoved?: string;
+    notifyOnChanged?: string;
+  },
 ): Promise<void> {
   const subscription = await db.subscription.findFirst({
     where: { id: subscriptionId, userId },
@@ -340,7 +348,47 @@ export async function addCondition(
     return;
   }
 
-  const line = lineConditionSchema.parse(values);
+  let filePath = values.filePath ?? "";
+  let lineNumber = values.lineNumber ?? "";
+  const permalink = parseGitHubPermalink(filePath);
+  if (permalink) {
+    const matchesRepository =
+      permalink.owner.toLowerCase() ===
+        subscription.repository.owner.toLowerCase() &&
+      permalink.repository.toLowerCase() ===
+        subscription.repository.name.toLowerCase();
+    if (!matchesRepository) {
+      throw new Error(
+        `Use a permalink from ${subscription.repository.fullName}`,
+      );
+    }
+    filePath = permalink.filePath;
+    lineNumber = String(permalink.lineNumber);
+  } else if (/github\.com|^\s*\[[^\]]*]\(/i.test(filePath)) {
+    throw new Error(
+      "Use a GitHub file URL with a line anchor, such as #L42",
+    );
+  }
+
+  const line = lineConditionSchema.parse({ filePath, lineNumber });
+  const triggerValues = [
+    values.notifyOnRemoved,
+    values.notifyOnMoved,
+    values.notifyOnChanged,
+  ];
+  const omittedLegacyTriggers = triggerValues.every(
+    (value) => value === undefined,
+  );
+  const notifyOnRemoved =
+    omittedLegacyTriggers || values.notifyOnRemoved === "on";
+  const notifyOnMoved =
+    omittedLegacyTriggers || values.notifyOnMoved === "on";
+  const notifyOnChanged =
+    omittedLegacyTriggers || values.notifyOnChanged === "on";
+  if (!notifyOnRemoved && !notifyOnMoved && !notifyOnChanged) {
+    throw new Error("Select at least one notification trigger");
+  }
+
   await withRepositoryReadToken(
     userId,
     subscription.repository.isPrivate,
@@ -383,6 +431,10 @@ export async function addCondition(
         baselineLineContent: content,
         lastObservedCommitSha: commit.sha,
         lastObservedLineContent: content,
+        lastObservedLineState: LineMatchState.EXACT,
+        notifyOnRemoved,
+        notifyOnMoved,
+        notifyOnChanged,
       },
     });
   });

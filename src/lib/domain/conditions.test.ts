@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 import {
   buildSearchableText,
   lineChanged,
+  lineNotificationTriggers,
+  observeCapturedLine,
   textContains,
 } from "@/lib/domain/conditions";
 
@@ -51,5 +53,82 @@ describe("line conditions", () => {
   it("does not report an unchanged line, including an absent line", () => {
     expect(lineChanged("same", "same")).toBe(false);
     expect(lineChanged(null, null)).toBe(false);
+  });
+
+  it("distinguishes exact, moved, substring, and removed content", () => {
+    expect(observeCapturedLine("target", "first\ntarget\nlast", 2)).toEqual({
+      lineContent: "target",
+      state: "EXACT",
+    });
+    expect(observeCapturedLine("target", "target\nother", 2)).toEqual({
+      lineContent: "other",
+      state: "MOVED",
+    });
+    expect(observeCapturedLine("target", "first\nprefix target suffix", 2)).toEqual(
+      {
+        lineContent: "prefix target suffix",
+        state: "MOVED",
+      },
+    );
+    expect(observeCapturedLine("target", "first\nother", 2)).toEqual({
+      lineContent: "other",
+      state: "REMOVED",
+    });
+    expect(observeCapturedLine("target", null, 2)).toEqual({
+      lineContent: null,
+      state: "REMOVED",
+    });
+  });
+
+  it("does not fire a removed-only condition while content exists elsewhere", () => {
+    expect(
+      lineNotificationTriggers({
+        previousLineContent: "target",
+        currentLineContent: "other",
+        previousState: "EXACT",
+        currentState: "MOVED",
+        notifyOnRemoved: true,
+        notifyOnMoved: false,
+        notifyOnChanged: false,
+      }),
+    ).toEqual([]);
+  });
+
+  it("fires each selected transition without repeating a persistent state", () => {
+    expect(
+      lineNotificationTriggers({
+        previousLineContent: "target",
+        currentLineContent: "other",
+        previousState: "EXACT",
+        currentState: "MOVED",
+        notifyOnRemoved: true,
+        notifyOnMoved: true,
+        notifyOnChanged: true,
+      }),
+    ).toEqual(["moved", "changed"]);
+
+    expect(
+      lineNotificationTriggers({
+        previousLineContent: "other",
+        currentLineContent: "other",
+        previousState: "MOVED",
+        currentState: "MOVED",
+        notifyOnRemoved: true,
+        notifyOnMoved: true,
+        notifyOnChanged: true,
+      }),
+    ).toEqual([]);
+
+    expect(
+      lineNotificationTriggers({
+        previousLineContent: "other",
+        currentLineContent: "other",
+        previousState: "MOVED",
+        currentState: "REMOVED",
+        notifyOnRemoved: true,
+        notifyOnMoved: true,
+        notifyOnChanged: true,
+      }),
+    ).toEqual(["removed"]);
   });
 });

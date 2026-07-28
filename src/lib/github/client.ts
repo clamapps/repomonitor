@@ -1,9 +1,16 @@
 import "server-only";
 
+import { createHash } from "node:crypto";
+
 import {
   GitHubApiError,
   permanentGitHubAccessFailure,
 } from "@/lib/github/access";
+import {
+  GITHUB_DEFAULT_HOURLY_LIMIT,
+  GitHubRateLimitTracker,
+  type GitHubRequestMode,
+} from "@/lib/github/rate-limit";
 
 const API_ROOT = "https://api.github.com";
 
@@ -13,28 +20,68 @@ type GitHubRequestOptions = Omit<RequestInit, "headers"> & {
   headers?: Record<string, string>;
 };
 
+const rateLimits = new GitHubRateLimitTracker();
+
+function requestIdentity(accessToken: string): {
+  key: string;
+  mode: GitHubRequestMode;
+} {
+  if (!accessToken) return { key: "anonymous", mode: "anonymous" };
+  const fingerprint = createHash("sha256")
+    .update(accessToken)
+    .digest("base64url");
+  return { key: `token:${fingerprint}`, mode: "authenticated" };
+}
+
 export async function githubFetch<T>(
   accessToken: string,
   path: string,
   options: GitHubRequestOptions = {},
 ): Promise<T> {
+  const identity = requestIdentity(accessToken);
+  const blocked = rateLimits.reserve(identity.key, identity.mode);
+  if (blocked) {
+    throw new GitHubApiError(
+      `GitHub ${identity.mode} REST API limit is exhausted; retry after ${blocked.retryAfterSeconds} seconds`,
+      429,
+      JSON.stringify({
+        message: `${identity.mode} GitHub REST API request budget exhausted`,
+        limit: GITHUB_DEFAULT_HOURLY_LIMIT[identity.mode],
+      }),
+      String(blocked.retryAfterSeconds),
+      String(blocked.remaining),
+    );
+  }
+
   const response = await fetch(`${API_ROOT}${path}`, {
     ...options,
     headers: {
       Accept: "application/vnd.github+json",
-      Authorization: `Bearer ${accessToken}`,
       "X-GitHub-Api-Version": "2022-11-28",
       "User-Agent": "RepoMonitor",
+      ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
       ...options.headers,
     },
   });
+  const errorBody = response.ok ? "" : await response.text();
+  rateLimits.recordResponse(
+    identity.key,
+    identity.mode,
+    {
+      limit: response.headers.get("x-ratelimit-limit"),
+      remaining: response.headers.get("x-ratelimit-remaining"),
+      reset: response.headers.get("x-ratelimit-reset"),
+      retryAfter: response.headers.get("retry-after"),
+    },
+    response.status,
+    errorBody,
+  );
 
   if (!response.ok) {
-    const body = await response.text();
     throw new GitHubApiError(
       `GitHub request failed with ${response.status}`,
       response.status,
-      body,
+      errorBody,
       response.headers.get("retry-after"),
       response.headers.get("x-ratelimit-remaining"),
     );
@@ -218,12 +265,11 @@ export async function compareCommits(
   );
 }
 
-export async function getFileLine(
+export async function getFileContent(
   accessToken: string,
   owner: string,
   name: string,
   path: string,
-  lineNumber: number,
   ref: string,
 ): Promise<string | null> {
   const encodedPath = path
@@ -237,12 +283,23 @@ export async function getFileLine(
       `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/contents/${encodedPath}?${query}`,
     );
     if (file.type !== "file" || file.encoding !== "base64") return null;
-    const content = Buffer.from(file.content.replace(/\n/g, ""), "base64").toString(
+    return Buffer.from(file.content.replace(/\n/g, ""), "base64").toString(
       "utf8",
     );
-    return content.split(/\r?\n/)[lineNumber - 1] ?? null;
   } catch (error) {
     if (error instanceof GitHubApiError && error.status === 404) return null;
     throw error;
   }
+}
+
+export async function getFileLine(
+  accessToken: string,
+  owner: string,
+  name: string,
+  path: string,
+  lineNumber: number,
+  ref: string,
+): Promise<string | null> {
+  const content = await getFileContent(accessToken, owner, name, path, ref);
+  return content?.split(/\r?\n/)[lineNumber - 1] ?? null;
 }

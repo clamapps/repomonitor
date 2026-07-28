@@ -1014,12 +1014,8 @@ label > small {
   position: relative;
 }
 
-.add-condition > summary {
-  list-style: none;
-}
-
-.add-condition > summary::-webkit-details-marker {
-  display: none;
+.add-condition-toggle {
+  white-space: nowrap;
 }
 
 .condition-menu {
@@ -1054,6 +1050,41 @@ label > small {
   display: grid;
   grid-template-columns: 1fr 85px;
   gap: 10px;
+}
+
+.line-triggers {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  border: 0;
+  margin: 14px 0 0;
+  padding: 0;
+}
+
+.line-triggers legend {
+  width: 100%;
+  margin-bottom: 1px;
+}
+
+.line-triggers label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+}
+
+.line-triggers input {
+  width: 15px;
+  min-height: 15px;
+  margin: 0;
+  accent-color: var(--blue);
+}
+
+.field-error {
+  display: block;
+  margin-top: 6px;
+  color: var(--red);
+  font-size: 10px;
 }
 
 .condition-list {

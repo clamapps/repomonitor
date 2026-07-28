@@ -17,7 +17,8 @@ import { config } from "@/lib/config";
 import { db } from "@/lib/db";
 import {
   describeLine,
-  lineChanged,
+  lineNotificationTriggers,
+  observeCapturedLine,
   textContains,
   TextEventMaterial,
 } from "@/lib/domain/conditions";
@@ -26,13 +27,13 @@ import { sendEmail } from "@/lib/email/sender";
 import {
   compareCommits,
   getCommit,
-  getFileLine,
+  getFileContent,
   getRepository,
   listCommitsSince,
   listReleasesAfter,
   permanentGitHubAccessFailure,
 } from "@/lib/github/client";
-import { withGitHubAppToken } from "@/lib/github/app";
+import { withPublicRepositoryToken } from "@/lib/github/app";
 import {
   GitHubAuthorizationError,
   withPrivateRepositoryToken,
@@ -149,21 +150,39 @@ async function evaluateLineConditions(
     if (
       condition.type !== ConditionType.LINE_CHANGE ||
       !condition.filePath ||
-      !condition.lineNumber
+      !condition.lineNumber ||
+      condition.baselineLineContent === null
     ) {
       continue;
     }
-    const current = await getFileLine(
+    const fileContent = await getFileContent(
       token,
       repository.owner,
       repository.name,
       condition.filePath,
-      condition.lineNumber,
       commitSha,
     );
+    const observation = observeCapturedLine(
+      condition.baselineLineContent,
+      fileContent,
+      condition.lineNumber,
+    );
     const previous = condition.lastObservedLineContent;
-    if (lineChanged(previous, current)) {
-      const summary = `${condition.filePath}:${condition.lineNumber} changed from “${describeLine(previous)}” to “${describeLine(current)}”.`;
+    const triggers = lineNotificationTriggers({
+      previousLineContent: previous,
+      currentLineContent: observation.lineContent,
+      previousState: condition.lastObservedLineState ?? "EXACT",
+      currentState: observation.state,
+      notifyOnRemoved: condition.notifyOnRemoved,
+      notifyOnMoved: condition.notifyOnMoved,
+      notifyOnChanged: condition.notifyOnChanged,
+    });
+    if (triggers.length > 0) {
+      const triggerDescription =
+        triggers.length === 1
+          ? triggers[0]
+          : `${triggers.slice(0, -1).join(", ")} and ${triggers.at(-1)}`;
+      const summary = `Line alert for ${condition.filePath}:${condition.lineNumber} (${triggerDescription}). Captured “${describeLine(condition.baselineLineContent)}”; current numbered line “${describeLine(observation.lineContent)}”.`;
       const created = await createNotification(
         condition.id,
         eventKey,
@@ -178,11 +197,13 @@ async function evaluateLineConditions(
       where: { id: condition.id },
       data: {
         lastObservedCommitSha: commitSha,
-        lastObservedLineContent: current,
+        lastObservedLineContent: observation.lineContent,
+        lastObservedLineState: observation.state,
       },
     });
     condition.lastObservedCommitSha = commitSha;
-    condition.lastObservedLineContent = current;
+    condition.lastObservedLineContent = observation.lineContent;
+    condition.lastObservedLineState = observation.state;
   }
   return queued;
 }
@@ -770,7 +791,7 @@ export async function runPollingCycle(
       repositoryIds.add(cursor.repository.id);
       result.events += 1;
       try {
-        const queued = await withGitHubAppToken(
+        const queued = await withPublicRepositoryToken(
           async (token) => {
             if (!validatedPublicRepositories.has(cursor.repository.id)) {
               const current = await getRepository(

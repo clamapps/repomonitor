@@ -1,6 +1,6 @@
 import "server-only";
 
-import { config } from "@/lib/config";
+import { config, isProduction } from "@/lib/config";
 import { decryptSecret, encryptSecret } from "@/lib/crypto";
 import { db } from "@/lib/db";
 import { createGitHubAppManifest } from "@/lib/github/app-manifest";
@@ -75,6 +75,12 @@ export async function registerGitHubAppFromManifest(
   code: string,
   configuredByUserId: string,
 ) {
+  if (!isProduction()) {
+    throw new GitHubAppConfigurationError(
+      "GitHub App registration is disabled in development.",
+    );
+  }
+
   const response = await fetch(
     `https://api.github.com/app-manifests/${encodeURIComponent(code)}/conversions`,
     {
@@ -135,6 +141,12 @@ export async function authorizeGitHubAppForPublicPolling(
   expectedGithubId: string,
   authorizedByUserId: string,
 ): Promise<string> {
+  if (!isProduction()) {
+    throw new GitHubAppConfigurationError(
+      "GitHub App authorization is disabled in development.",
+    );
+  }
+
   const app = await db.gitHubAppConfiguration.findUnique({
     where: { id: "global" },
   });
@@ -258,9 +270,13 @@ async function clearInvalidAuthorization(): Promise<void> {
   });
 }
 
-export async function withGitHubAppToken<T>(
+export async function withPublicRepositoryToken<T>(
   operation: (accessToken: string) => Promise<T>,
 ): Promise<T> {
+  if (!isProduction()) {
+    return operation("");
+  }
+
   const token = await publicPollingToken();
   try {
     return await operation(token);

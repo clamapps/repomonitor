@@ -4,7 +4,6 @@ generator client {
 
 datasource db {
   provider = "sqlite"
-  url      = env("DATABASE_URL")
 }
 
 enum EmailSource {
@@ -20,6 +19,12 @@ enum EventType {
 enum ConditionType {
   TEXT_CONTAINS
   LINE_CHANGE
+}
+
+enum LineMatchState {
+  EXACT
+  MOVED
+  REMOVED
 }
 
 enum NotificationStatus {
@@ -152,6 +157,10 @@ model Condition {
   baselineLineContent     String?
   lastObservedCommitSha   String?
   lastObservedLineContent String?
+  lastObservedLineState   LineMatchState?
+  notifyOnRemoved         Boolean           @default(true)
+  notifyOnMoved           Boolean           @default(true)
+  notifyOnChanged         Boolean           @default(true)
   notifications           Notification[]
   createdAt               DateTime          @default(now())
   updatedAt               DateTime          @updatedAt

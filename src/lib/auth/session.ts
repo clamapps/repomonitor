@@ -57,7 +57,6 @@ export async function currentUser() {
 
   if (!session || session.expiresAt <= new Date()) {
     if (session) await db.session.delete({ where: { id: session.id } });
-    jar.delete(SESSION_COOKIE);
     return null;
   }
   return session.user;

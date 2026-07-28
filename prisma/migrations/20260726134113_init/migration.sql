@@ -102,6 +102,10 @@ CREATE TABLE "Condition" (
     "baselineLineContent" TEXT,
     "lastObservedCommitSha" TEXT,
     "lastObservedLineContent" TEXT,
+    "lastObservedLineState" TEXT,
+    "notifyOnRemoved" BOOLEAN NOT NULL DEFAULT true,
+    "notifyOnMoved" BOOLEAN NOT NULL DEFAULT true,
+    "notifyOnChanged" BOOLEAN NOT NULL DEFAULT true,
     "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" DATETIME NOT NULL,
     CONSTRAINT "Condition_subscriptionEventId_fkey" FOREIGN KEY ("subscriptionEventId") REFERENCES "SubscriptionEvent" ("id") ON DELETE CASCADE ON UPDATE CASCADE

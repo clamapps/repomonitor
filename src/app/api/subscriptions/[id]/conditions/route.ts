@@ -26,6 +26,9 @@ export async function POST(request: Request, context: Context) {
       textPattern: String(form.get("textPattern") ?? ""),
       filePath: String(form.get("filePath") ?? ""),
       lineNumber: String(form.get("lineNumber") ?? ""),
+      notifyOnRemoved: String(form.get("notifyOnRemoved") ?? ""),
+      notifyOnMoved: String(form.get("notifyOnMoved") ?? ""),
+      notifyOnChanged: String(form.get("notifyOnChanged") ?? ""),
     });
     return redirectWithMessage(
       request,

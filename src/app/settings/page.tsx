@@ -6,9 +6,10 @@ import {
   requireUser,
   userIsAdmin,
 } from "@/lib/auth/session";
-import { googleOAuthConfigured } from "@/lib/config";
+import { googleOAuthConfigured, isProduction } from "@/lib/config";
 import { db } from "@/lib/db";
 import { hasPrivateRepositoryAccess } from "@/lib/github/access";
+import { GITHUB_DEFAULT_HOURLY_LIMIT } from "@/lib/github/rate-limit";
 
 export const dynamic = "force-dynamic";
 
@@ -19,6 +20,7 @@ export default async function SettingsPage({
 }) {
   const [user, query] = await Promise.all([requireUser(), searchParams]);
   const isAdmin = userIsAdmin(user.githubLogin);
+  const githubAppEnabled = isProduction();
   const [gmail, lastLease, githubApp] = isAdmin
     ? await Promise.all([
         db.gmailSender.findUnique({ where: { id: "global" } }),
@@ -129,7 +131,9 @@ export default async function SettingsPage({
             </a>
           </div>
           <p className="form-hint">
-            Public repositories are polled through the service GitHub App.
+            {githubAppEnabled
+              ? "Public repositories are polled through the service GitHub App."
+              : "In development, public repositories are polled anonymously."}{" "}
             Changing this setting replaces the stored user token and may pause
             existing private subscriptions.
           </p>
@@ -150,7 +154,28 @@ export default async function SettingsPage({
             <div className="admin-grid">
               <div className="admin-block">
                 <small>PUBLIC REPOSITORY POLLING</small>
-                {githubApp ? (
+                {!githubAppEnabled ? (
+                  <>
+                    <p>
+                      Development mode uses anonymous GitHub REST requests for
+                      public repositories. GitHub App registration requires a
+                      publicly reachable URL.
+                    </p>
+                    <button
+                      className="button button-primary button-small"
+                      disabled
+                    >
+                      Register GitHub App
+                    </button>
+                    <span className="form-hint">
+                      Anonymous polling is limited to{" "}
+                      {GITHUB_DEFAULT_HOURLY_LIMIT.anonymous} requests per hour
+                      for the server&apos;s IP address. RepoMonitor stops
+                      requesting when GitHub reports that budget is exhausted
+                      and resumes after the reset time.
+                    </span>
+                  </>
+                ) : githubApp ? (
                   githubApp.accessTokenEncrypted ? (
                     <>
                       <div className="connected-sender">
@@ -209,11 +234,13 @@ export default async function SettingsPage({
                     </form>
                   </>
                 )}
-                <span className="form-hint">
-                  Public repositories remain public. The app user token only
-                  replaces GitHub&apos;s anonymous REST API limit with an
-                  authenticated limit.
-                </span>
+                {githubAppEnabled ? (
+                  <span className="form-hint">
+                    Public repositories remain public. The app user token only
+                    replaces GitHub&apos;s anonymous REST API limit with an
+                    authenticated limit.
+                  </span>
+                ) : null}
               </div>
               <div className="admin-block">
                 <small>GOOGLE EMAIL SENDER</small>

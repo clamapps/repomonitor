@@ -46,6 +46,11 @@ describe("permanent GitHub access failures", () => {
         new GitHubApiError("failed", 403, "secondary rate limit", "60", null),
       ),
     ).toBeNull();
+    expect(
+      permanentGitHubAccessFailure(
+        new GitHubApiError("failed", 429, "API rate limit exceeded", "60", "0"),
+      ),
+    ).toBeNull();
   });
 
   it("keeps server errors transient", () => {

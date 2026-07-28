@@ -1,4 +1,43 @@
-onlyBuiltDependencies:
-  - "@prisma/client"
-  - "@prisma/engines"
-  - prisma
+# Dependency installation policy. Keep allowed lifecycle scripts version-pinned and
+# review this list whenever one of these packages is upgraded.
+allowBuilds:
+  "@prisma/engines@7.9.0": true
+  "better-sqlite3@12.11.1": true
+  "prisma@7.9.0": true
+  "sharp@0.35.0": true
+  "unrs-resolver@1.12.2": true
+
+# Fail installs if a new dependency introduces an unreviewed lifecycle script.
+strictDepBuilds: true
+
+# Patch vulnerable transitive dependencies whose parents have not yet widened
+# their declared ranges. Keep parent selectors narrow and remove overrides once
+# upstream releases include the fixed versions.
+overrides:
+  "@prisma/dev@0.24.14>find-my-way": "9.7.0"
+  "@prisma/dev@0.24.14>valibot": "1.4.2"
+  "brace-expansion@<=5.0.7": "5.0.8"
+  "next@16.2.12>postcss": "8.5.23"
+  "next@16.2.12>sharp": "0.35.0"
+
+# Give registries and security tooling time to identify malicious releases.
+minimumReleaseAge: 1440
+minimumReleaseAgeStrict: true
+minimumReleaseAgeIgnoreMissingTime: false
+
+# Reject packages whose publishing provenance regresses, and stop transitive
+# dependencies from fetching executable code from arbitrary Git or tarball URLs.
+trustPolicy: no-downgrade
+trustPolicyIgnoreAfter: 43200
+trustLockfile: false
+blockExoticSubdeps: true
+
+# Preserve pnpm's content-addressed store integrity checks explicitly.
+verifyStoreIntegrity: true
+strictStorePkgContentCheck: true
+
+# Keep future direct dependency additions pinned like the existing manifest.
+saveExact: true
+
+patchedDependencies:
+  minimatch@3.1.5: patches/minimatch@3.1.5.patch

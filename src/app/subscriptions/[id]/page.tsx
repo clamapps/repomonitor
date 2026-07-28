@@ -5,6 +5,8 @@ import { notFound } from "next/navigation";
 import { EventBadge } from "@/app/_components/event-badge";
 import { Flash } from "@/app/_components/flash";
 import { Header } from "@/app/_components/header";
+import { AddConditionMenu } from "@/app/subscriptions/[id]/_components/add-condition-menu";
+import { LineConditionForm } from "@/app/subscriptions/[id]/_components/line-condition-form";
 import { requireUser } from "@/lib/auth/session";
 import { db } from "@/lib/db";
 
@@ -17,6 +19,20 @@ type PageProps = {
 
 function shortSha(value: string | null) {
   return value?.slice(0, 7) ?? "—";
+}
+
+function lineTriggerNames(condition: {
+  notifyOnRemoved: boolean;
+  notifyOnMoved: boolean;
+  notifyOnChanged: boolean;
+}) {
+  return [
+    condition.notifyOnRemoved ? "removed" : null,
+    condition.notifyOnMoved ? "moved" : null,
+    condition.notifyOnChanged ? "changed" : null,
+  ]
+    .filter(Boolean)
+    .join(", ");
 }
 
 export default async function SubscriptionPage({
@@ -77,8 +93,8 @@ export default async function SubscriptionPage({
               Watching <strong>{subscription.repository.defaultBranch}</strong>{" "}
               once a day{" "}
               {subscription.repository.isPrivate
-                ? "with your GitHub authorization."
-                : "through the shared read-only GitHub App."}
+                ? "with your GitHub user account authorization."
+                : "through public GitHub access."}
             </p>
             <a
               className="external-link"
@@ -156,74 +172,39 @@ export default async function SubscriptionPage({
                     : "Release text and code are checked at the release tag."}
                 </p>
               </div>
-              <details className="add-condition">
-                <summary className="button button-primary button-small">
-                  + Add condition
-                </summary>
-                <div className="condition-menu">
-                  <form
-                    action={`/api/subscriptions/${id}/conditions`}
-                    method="post"
-                  >
-                    <input type="hidden" name="eventType" value={event.type} />
+              <AddConditionMenu menuId={`condition-menu-${event.id}`}>
+                <form
+                  action={`/api/subscriptions/${id}/conditions`}
+                  method="post"
+                >
+                  <input type="hidden" name="eventType" value={event.type} />
+                  <input
+                    type="hidden"
+                    name="conditionType"
+                    value={ConditionType.TEXT_CONTAINS}
+                  />
+                  <strong>Text contains</strong>
+                  <p>Search messages, release notes, paths, and available diffs.</p>
+                  <label>
+                    Text to match
                     <input
-                      type="hidden"
-                      name="conditionType"
-                      value={ConditionType.TEXT_CONTAINS}
+                      name="textPattern"
+                      placeholder="breaking change"
+                      required
                     />
-                    <strong>Text contains</strong>
-                    <p>Search messages, release notes, paths, and available diffs.</p>
-                    <label>
-                      Text to match
-                      <input
-                        name="textPattern"
-                        placeholder="breaking change"
-                        required
-                      />
-                    </label>
-                    <button className="button button-primary button-small">
-                      Add text condition
-                    </button>
-                  </form>
-                  <div className="menu-rule" />
-                  <form
-                    action={`/api/subscriptions/${id}/conditions`}
-                    method="post"
-                  >
-                    <input type="hidden" name="eventType" value={event.type} />
-                    <input
-                      type="hidden"
-                      name="conditionType"
-                      value={ConditionType.LINE_CHANGE}
-                    />
-                    <strong>Specific line changes</strong>
-                    <p>Save today’s exact line, then compare each new event.</p>
-                    <div className="split-fields">
-                      <label>
-                        File path
-                        <input
-                          name="filePath"
-                          placeholder="src/config.ts"
-                          required
-                        />
-                      </label>
-                      <label>
-                        Line
-                        <input
-                          name="lineNumber"
-                          type="number"
-                          min="1"
-                          placeholder="42"
-                          required
-                        />
-                      </label>
-                    </div>
-                    <button className="button button-primary button-small">
-                      Capture line
-                    </button>
-                  </form>
-                </div>
-              </details>
+                  </label>
+                  <button className="button button-primary button-small">
+                    Add text condition
+                  </button>
+                </form>
+                <div className="menu-rule" />
+                <LineConditionForm
+                  action={`/api/subscriptions/${id}/conditions`}
+                  eventType={event.type}
+                  repositoryOwner={subscription.repository.owner}
+                  repositoryName={subscription.repository.name}
+                />
+              </AddConditionMenu>
             </header>
 
             {event.conditions.length ? (
@@ -251,8 +232,9 @@ export default async function SubscriptionPage({
                           </h3>
                           <code>{condition.lastObservedLineContent}</code>
                           <span>
-                            Baseline {shortSha(condition.baselineCommitSha)} ·
-                            observed {shortSha(condition.lastObservedCommitSha)}
+                            Alerts: {lineTriggerNames(condition)} · baseline{" "}
+                            {shortSha(condition.baselineCommitSha)} · observed{" "}
+                            {shortSha(condition.lastObservedCommitSha)}
                           </span>
                         </>
                       )}
