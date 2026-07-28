@@ -10,6 +10,7 @@
   "scripts": {
     "dev": "next dev",
     "build": "prisma generate && next build",
+    "build:styledev": "node scripts/build-styledev.mjs",
     "start": "node .next/standalone/server.js",
     "postinstall": "prisma generate",
     "lint": "eslint .",

@@ -8,6 +8,8 @@ data/*.db-journal
 data/*.db-shm
 data/*.db-wal
 coverage
+/build/styledev/
+/build/repomonitor-styledev.zip
 *.log
 *.tsbuildinfo
 .DS_Store
