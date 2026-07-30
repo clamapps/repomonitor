@@ -749,7 +749,7 @@ const previewStyles = `
 .nav a[aria-current="page"] {
   color: var(--ink);
   text-decoration: underline;
-  text-decoration-color: var(--acid-deep);
+  text-decoration-color: var(--orange);
   text-decoration-thickness: 3px;
   text-underline-offset: 7px;
 }
