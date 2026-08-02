@@ -570,9 +570,21 @@ const settingsHtml = documentTemplate({
               <strong>designer@example.com</strong>
               <span>Custom · Verified</span>
             </div>
-            <button class="button button-secondary button-small" type="submit" disabled>
-              Selected
-            </button>
+            <span class="email-actions">
+              <button class="button button-secondary button-small" type="submit" disabled>
+                Selected
+              </button>
+              <button
+                class="icon-button email-remove-button"
+                type="submit"
+                aria-label="Remove designer@example.com"
+                title="Remove custom email address"
+              >
+                <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M3 6h18M8 6V4h8v2m3 0-1 14H6L5 6m5 4v6m4-6v6"></path>
+                </svg>
+              </button>
+            </span>
           </form>
           <form class="email-option" data-demo-action="GitHub email selected">
             <input type="hidden" name="emailAddressId" value="github">
@@ -581,7 +593,9 @@ const settingsHtml = documentTemplate({
               <strong>octocat@github.example</strong>
               <span>GitHub · Verified</span>
             </div>
-            <button class="button button-secondary button-small" type="submit">Use</button>
+            <span class="email-actions">
+              <button class="button button-secondary button-small" type="submit">Use</button>
+            </span>
           </form>
           <form class="email-option" data-demo-action="Verification email resent">
             <input type="hidden" name="emailAddressId" value="pending">
@@ -590,7 +604,19 @@ const settingsHtml = documentTemplate({
               <strong>alerts@example.com</strong>
               <span>Custom · Awaiting verification</span>
             </div>
-            <span class="pending-pill">Pending</span>
+            <span class="email-actions">
+              <span class="pending-pill">Pending</span>
+              <button
+                class="icon-button email-remove-button"
+                type="submit"
+                aria-label="Remove alerts@example.com"
+                title="Remove custom email address"
+              >
+                <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M3 6h18M8 6V4h8v2m3 0-1 14H6L5 6m5 4v6m4-6v6"></path>
+                </svg>
+              </button>
+            </span>
           </form>
         </div>
         <form class="inline-form" data-demo-action="Verification email sent">

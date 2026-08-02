@@ -1331,6 +1331,23 @@ label > small {
   font-size: 10px;
 }
 
+.email-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.email-remove-button {
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+}
+
+.email-remove-button svg {
+  width: 16px;
+  height: 16px;
+}
+
 .pending-pill {
   border-radius: 20px;
   padding: 5px 9px;
@@ -1707,8 +1724,7 @@ label > small {
     grid-template-columns: 20px 1fr;
   }
 
-  .email-option > .button,
-  .email-option > .pending-pill {
+  .email-option > .email-actions {
     grid-column: 2;
     justify-self: start;
   }

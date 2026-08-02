@@ -71,16 +71,41 @@ export default async function SettingsPage({
                     {address.verifiedAt ? "Verified" : "Awaiting verification"}
                   </span>
                 </div>
-                {address.verifiedAt ? (
-                  <button
-                    className="button button-secondary button-small"
-                    disabled={user.notificationEmailId === address.id}
-                  >
-                    {user.notificationEmailId === address.id ? "Selected" : "Use"}
-                  </button>
-                ) : (
-                  <span className="pending-pill">Pending</span>
-                )}
+                <span className="email-actions">
+                  {address.verifiedAt ? (
+                    <button
+                      className="button button-secondary button-small"
+                      disabled={user.notificationEmailId === address.id}
+                    >
+                      {user.notificationEmailId === address.id
+                        ? "Selected"
+                        : "Use"}
+                    </button>
+                  ) : (
+                    <span className="pending-pill">Pending</span>
+                  )}
+                  {address.source === EmailSource.CUSTOM ? (
+                    <button
+                      className="icon-button email-remove-button"
+                      type="submit"
+                      formAction="/api/email/addresses/delete"
+                      aria-label={`Remove ${address.email}`}
+                      title="Remove custom email address"
+                    >
+                      <svg
+                        aria-hidden="true"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="1.8"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      >
+                        <path d="M3 6h18M8 6V4h8v2m3 0-1 14H6L5 6m5 4v6m4-6v6" />
+                      </svg>
+                    </button>
+                  ) : null}
+                </span>
               </form>
             ))}
           </div>
