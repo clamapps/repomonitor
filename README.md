@@ -160,9 +160,15 @@ To enable the optional global Gmail sender:
 4. Set `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET`.
 5. Sign in as a super-admin, open Settings, and connect the sender address.
 
-The app requests offline access plus the minimal `gmail.send` scope and stores
+The app requests offline access plus the minimal `gmail.send` scope, supports
+incremental authorization, verifies the scopes actually granted, and stores
 the refresh token encrypted. Removing the Google sender immediately returns
 delivery to sendmail.
+
+Production deployments can also register the signed security-event receiver at
+`/api/google/risc` for Google Cross-Account Protection. Matching account or
+token security events disconnect the Gmail sender. The registration command and
+Google Cloud setup are documented in the guide below.
 
 See [Google API and Gmail sender setup](docs/google-api-setup.md) for the exact
 Google Cloud project, audience, scopes, OAuth client, callback, and test-user

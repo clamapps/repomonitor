@@ -17,6 +17,7 @@ const baseSchema = z.object({
   MAIL_FROM: z.string().default("RepoMonitor <repomonitor@localhost>"),
   GOOGLE_CLIENT_ID: z.string().optional(),
   GOOGLE_CLIENT_SECRET: z.string().optional(),
+  GOOGLE_RISC_CLIENT_IDS: z.string().optional(),
 });
 
 export type AppConfig = z.infer<typeof baseSchema>;
@@ -43,4 +44,11 @@ export function isSuperAdminLogin(login: string): boolean {
 export function googleOAuthConfigured(): boolean {
   const { GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET } = config();
   return Boolean(GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET);
+}
+
+export function googleRiscClientIds(): string[] {
+  const { GOOGLE_CLIENT_ID, GOOGLE_RISC_CLIENT_IDS } = config();
+  return [GOOGLE_CLIENT_ID, ...(GOOGLE_RISC_CLIENT_IDS?.split(",") ?? [])]
+    .map((value) => value?.trim())
+    .filter((value): value is string => Boolean(value));
 }

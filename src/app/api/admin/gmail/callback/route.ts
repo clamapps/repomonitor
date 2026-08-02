@@ -5,6 +5,8 @@ import { encryptSecret } from "@/lib/crypto";
 import { db } from "@/lib/db";
 import { clearGoogleAccessTokenCache } from "@/lib/email/sender";
 
+const GMAIL_SEND_SCOPE = "https://www.googleapis.com/auth/gmail.send";
+
 function settingsRedirect(
   key: "notice" | "error",
   value: string,
@@ -43,6 +45,7 @@ export async function GET(request: Request) {
   const token = (await tokenResponse.json()) as {
     access_token?: string;
     refresh_token?: string;
+    scope?: string;
     error_description?: string;
   };
   if (!tokenResponse.ok || !token.access_token || !token.refresh_token) {
@@ -53,16 +56,26 @@ export async function GET(request: Request) {
     );
   }
 
+  const grantedScopes = new Set(token.scope?.split(/\s+/).filter(Boolean));
+  if (!grantedScopes.has(GMAIL_SEND_SCOPE)) {
+    return settingsRedirect(
+      "error",
+      "Google did not grant permission to send mail. Please authorize again.",
+    );
+  }
+
   const profileResponse = await fetch(
     "https://openidconnect.googleapis.com/v1/userinfo",
     { headers: { Authorization: `Bearer ${token.access_token}` } },
   );
   const profile = (await profileResponse.json()) as {
+    sub?: string;
     email?: string;
     email_verified?: boolean;
   };
   if (
     !profileResponse.ok ||
+    !profile.sub ||
     !profile.email_verified ||
     profile.email?.toLowerCase() !== state.email.toLowerCase()
   ) {
@@ -76,11 +89,13 @@ export async function GET(request: Request) {
     where: { id: "global" },
     update: {
       email: profile.email,
+      googleSubject: profile.sub,
       refreshTokenEncrypted: encryptSecret(token.refresh_token),
       configuredByUserId: admin.id,
     },
     create: {
       email: profile.email,
+      googleSubject: profile.sub,
       refreshTokenEncrypted: encryptSecret(token.refresh_token),
       configuredByUserId: admin.id,
     },

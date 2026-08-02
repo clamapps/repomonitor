@@ -167,6 +167,75 @@ Once connected, RepoMonitor uses this account for every notification and
 ignores `MAIL_FROM`. Removing the Google sender in Settings immediately returns
 delivery to the configured `sendmail` command.
 
+### Incremental authorization and partial consent
+
+RepoMonitor sends `include_granted_scopes=true` with its authorization request,
+so a later Google authorization can add permissions without discarding a grant
+the account already gave this OAuth client. The connection flow asks only for
+the identity scopes needed to verify the sender and the narrow `gmail.send`
+scope needed by this feature.
+
+Google can return fewer scopes than an application requested. RepoMonitor
+checks the token response and refuses to save a sender unless `gmail.send` was
+actually granted.
+
+## 7. Configure Cross-Account Protection
+
+RepoMonitor exposes a RISC security-event receiver at this production URL:
+
+```text
+https://repomonitor.example.com/api/google/risc
+```
+
+The receiver accepts only signed `application/secevent+jwt` events. It verifies
+Google's RS256 signature, the discovered Google issuer, and the OAuth client ID
+audience before acting. A matching token revocation, account revocation,
+disabled account, or credential-change event deletes the saved Gmail sender and
+clears its cached access token. Delivery then falls back to `sendmail` until a
+super-admin reconnects Google.
+
+To register the receiver:
+
+1. Deploy RepoMonitor at the public HTTPS `APP_URL`. Google will not deliver
+   RISC events to an HTTP endpoint.
+2. In the same Google Cloud project as `GOOGLE_CLIENT_ID`, enable the **RISC
+   API**, review the additional RISC terms, and accept them if appropriate for
+   your deployment.
+3. Create a service account and grant it **RISC Configuration Admin**
+   (`roles/riscconfigs.admin`).
+4. Create a JSON key for that service account. Keep the key outside this
+   repository and delete it after registration if it is no longer needed.
+5. From an environment whose `.env` has the production `APP_URL`, run:
+
+   ```sh
+   pnpm google:risc:configure path/to/service-account-key.json
+   ```
+
+The command registers `${APP_URL}/api/google/risc`, subscribes to the security
+events RepoMonitor handles, and requests a verification event. The service
+account key is used only by this one-shot command; it is not required by the
+running application.
+
+Google currently does not send Cross-Account Protection events for Google
+Workspace accounts. The receiver can still be configured for the project, but
+at present it protects connected consumer Google accounts only.
+
+After deploying this change, reconnect an existing Gmail sender once. That
+records the stable Google account subject used to match account-wide security
+events. Token-specific revocation events can still be matched to the encrypted
+refresh token.
+
+Normally, the RISC receiver accepts `GOOGLE_CLIENT_ID` as its audience. If the
+same deployment intentionally receives events for additional Google OAuth
+clients, list their IDs as a comma-separated value:
+
+```dotenv
+GOOGLE_RISC_CLIENT_IDS=another-client.apps.googleusercontent.com
+```
+
+Do not add unrelated or obsolete client IDs. Each accepted ID broadens the set
+of valid events delivered to this endpoint.
+
 ## Troubleshooting
 
 ### `redirect_uri_mismatch`
@@ -212,6 +281,18 @@ Remove and reconnect the sender in RepoMonitor Settings. If the connection
 cannot be removed cleanly, verify the client credentials and publishing status
 before trying again.
 
+### Cross-Account Protection verification fails
+
+- Confirm `APP_URL` is the public HTTPS URL and its domain is listed in the
+  Google Auth Platform's authorized domains.
+- Confirm the RISC API and terms were enabled in the same project as the OAuth
+  client.
+- Confirm the service account has `roles/riscconfigs.admin` in that project.
+- Confirm the deployed database migration added `GmailSender.googleSubject`.
+- Check the application logs for a rejected RISC signature/audience event or a
+  database-processing failure. Security event contents are intentionally not
+  logged.
+
 ## Google documentation
 
 - [Gmail API server-side authorization](https://developers.google.com/workspace/gmail/api/auth/web-server)
@@ -221,3 +302,4 @@ before trying again.
 - [Manage app data access](https://support.google.com/cloud/answer/15549135)
 - [Manage app audience](https://support.google.com/cloud/answer/15549945)
 - [Google OpenID Connect](https://developers.google.com/identity/openid-connect/openid-connect)
+- [Cross-Account Protection (RISC)](https://developers.google.com/identity/protocols/risc)

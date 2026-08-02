@@ -44,6 +44,7 @@ export async function POST(request: Request) {
     "scope",
     "openid email https://www.googleapis.com/auth/gmail.send",
   );
+  authorize.searchParams.set("include_granted_scopes", "true");
   authorize.searchParams.set("access_type", "offline");
   authorize.searchParams.set("prompt", "consent");
   authorize.searchParams.set("login_hint", parsed.data);

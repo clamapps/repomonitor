@@ -196,6 +196,8 @@ describe("redirects behind a reverse proxy", () => {
             JSON.stringify({
               access_token: "google-access-token",
               refresh_token: "google-refresh-token",
+              scope:
+                "openid email https://www.googleapis.com/auth/gmail.send",
             }),
             {
               status: 200,
@@ -206,6 +208,7 @@ describe("redirects behind a reverse proxy", () => {
         .mockResolvedValueOnce(
           new Response(
             JSON.stringify({
+              sub: "google-subject-1",
               email: "sender@example.com",
               email_verified: true,
             }),
@@ -228,6 +231,13 @@ describe("redirects behind a reverse proxy", () => {
       "google-state",
     );
     expect(mocks.gmailSenderUpsert).toHaveBeenCalled();
+    expect(mocks.gmailSenderUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({
+          googleSubject: "google-subject-1",
+        }),
+      }),
+    );
     const location = redirectLocation(response);
     expect(location.origin).toBe(PUBLIC_APP_URL);
     expect(location.pathname).toBe("/settings");

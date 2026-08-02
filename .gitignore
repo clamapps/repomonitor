@@ -3,6 +3,7 @@ node_modules
 .next
 .env
 .env.local
+.env.prod
 data/*.db
 data/*.db-journal
 data/*.db-shm
