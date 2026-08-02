@@ -1468,6 +1468,14 @@ label > small {
   gap: 7px;
 }
 
+.gmail-test-form label {
+  margin-bottom: 8px;
+}
+
+.gmail-action-row form {
+  margin: 0;
+}
+
 .form-hint {
   display: block;
   margin-top: 8px;

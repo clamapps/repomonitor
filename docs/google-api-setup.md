@@ -167,6 +167,11 @@ Once connected, RepoMonitor uses this account for every notification and
 ignores `MAIL_FROM`. Removing the Google sender in Settings immediately returns
 delivery to the configured `sendmail` command.
 
+To verify delivery without creating a subscription or custom address, enter a
+recipient in the connected sender's **Test recipient** field and select **Send
+test email**. This action is available only to a super-admin and always uses the
+connected Gmail sender rather than falling back to `sendmail`.
+
 ### Incremental authorization and partial consent
 
 RepoMonitor sends `include_granted_scopes=true` with its authorization request,

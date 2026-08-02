@@ -93,8 +93,24 @@ async function sendWithGmail(
     },
   );
   if (!response.ok) {
-    throw new Error(`Gmail send failed: ${response.status} ${await response.text()}`);
+    const body = await response.text();
+    let detail = body;
+    try {
+      const parsed = JSON.parse(body) as { error?: { message?: string } };
+      detail = parsed.error?.message ?? body;
+    } catch {
+      // Preserve a non-JSON response as the diagnostic detail.
+    }
+    throw new Error(
+      `Gmail send failed (${response.status}): ${detail || response.statusText}`,
+    );
   }
+}
+
+export async function sendGmailEmail(message: OutboundEmail): Promise<void> {
+  const gmail = await db.gmailSender.findUnique({ where: { id: "global" } });
+  if (!gmail) throw new Error("Google email sender is not connected");
+  return sendWithGmail(message, gmail);
 }
 
 export async function sendEmail(message: OutboundEmail): Promise<void> {

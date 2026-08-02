@@ -278,11 +278,37 @@ export default async function SettingsPage({
                         <span>Gmail API · connected</span>
                       </div>
                     </div>
-                    <form action="/api/admin/gmail/remove" method="post">
-                      <button className="button button-secondary button-small">
-                        Revert to sendmail
-                      </button>
+                    <form
+                      id="gmail-test-email"
+                      className="gmail-test-form"
+                      action="/api/admin/gmail/test"
+                      method="post"
+                    >
+                      <label>
+                        Test recipient
+                        <input
+                          type="email"
+                          name="to"
+                          placeholder="recipient@example.com"
+                          defaultValue={user.notificationEmail?.email ?? ""}
+                          required
+                        />
+                      </label>
                     </form>
+                    <div className="button-row gmail-action-row">
+                      <button
+                        className="button button-primary button-small"
+                        type="submit"
+                        form="gmail-test-email"
+                      >
+                        Send test email
+                      </button>
+                      <form action="/api/admin/gmail/remove" method="post">
+                        <button className="button button-secondary button-small">
+                          Revert to sendmail
+                        </button>
+                      </form>
+                    </div>
                   </>
                 ) : (
                   <form action="/api/admin/gmail/start" method="post">
