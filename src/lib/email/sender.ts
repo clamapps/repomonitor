@@ -22,6 +22,9 @@ async function sendWithSendmail(message: OutboundEmail): Promise<void> {
       stderr += String(chunk);
     });
     child.on("error", reject);
+    // Without this listener an EPIPE from sendmail closing stdin early is an
+    // unhandled stream error, which takes down the process.
+    child.stdin.on("error", reject);
     child.on("close", (code) => {
       if (code === 0) resolve();
       else reject(new Error(`sendmail exited with ${code}: ${stderr.trim()}`));
@@ -76,6 +79,7 @@ async function sendWithGmail(
     email: string;
     refreshTokenEncrypted: string;
   },
+  retryOnUnauthorized = true,
 ): Promise<void> {
   const token = await googleToken(sender);
   const raw = Buffer.from(buildRawEmail(message, sender.email)).toString(
@@ -92,6 +96,12 @@ async function sendWithGmail(
       body: JSON.stringify({ raw }),
     },
   );
+  if (response.status === 401 && retryOnUnauthorized) {
+    // The cached access token was revoked server-side; drop it and mint a new
+    // one rather than failing every send until the cache expires.
+    clearGoogleAccessTokenCache();
+    return sendWithGmail(message, sender, false);
+  }
   if (!response.ok) {
     const body = await response.text();
     let detail = body;

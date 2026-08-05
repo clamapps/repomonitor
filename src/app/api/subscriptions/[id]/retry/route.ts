@@ -1,10 +1,10 @@
 import { requireRouteUser } from "@/lib/auth/session";
-import { assertSameOrigin, redirectWithMessage } from "@/lib/http";
+import { assertSameOrigin, redirectWithMessage, routeHandler } from "@/lib/http";
 import { retrySubscription } from "@/lib/subscriptions";
 
 type Context = { params: Promise<{ id: string }> };
 
-export async function POST(request: Request, context: Context) {
+export const POST = routeHandler(async (request: Request, context: Context) => {
   assertSameOrigin(request);
   const user = await requireRouteUser();
   const { id } = await context.params;
@@ -26,4 +26,4 @@ export async function POST(request: Request, context: Context) {
         : "Repository access could not be restored.",
     );
   }
-}
+});

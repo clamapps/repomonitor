@@ -2,11 +2,11 @@ import { z } from "zod";
 
 import { requireRouteAdmin } from "@/lib/auth/session";
 import { sendGmailEmail } from "@/lib/email/sender";
-import { assertSameOrigin, redirectWithMessage } from "@/lib/http";
+import { assertSameOrigin, redirectWithMessage, routeHandler } from "@/lib/http";
 
 const recipientSchema = z.string().trim().toLowerCase().email().max(254);
 
-export async function POST(request: Request) {
+export const POST = routeHandler(async (request: Request) => {
   assertSameOrigin(request);
   await requireRouteAdmin();
 
@@ -49,4 +49,4 @@ export async function POST(request: Request) {
       error instanceof Error ? error.message : "Unable to send test email",
     );
   }
-}
+});

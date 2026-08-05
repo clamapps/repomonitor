@@ -2,7 +2,7 @@ import { ZodError } from "zod";
 
 import { requireRouteUser } from "@/lib/auth/session";
 import { GitHubApiError } from "@/lib/github/client";
-import { assertSameOrigin, redirectWithMessage } from "@/lib/http";
+import { assertSameOrigin, redirectWithMessage, routeHandler } from "@/lib/http";
 import { createSubscription, parseEventTypes } from "@/lib/subscriptions";
 
 function errorMessage(error: unknown): string {
@@ -15,7 +15,7 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Unable to add repository";
 }
 
-export async function POST(request: Request) {
+export const POST = routeHandler(async (request: Request) => {
   assertSameOrigin(request);
   const user = await requireRouteUser();
   const form = await request.formData();
@@ -34,4 +34,4 @@ export async function POST(request: Request) {
   } catch (error) {
     return redirectWithMessage(request, "/", "error", errorMessage(error));
   }
-}
+});

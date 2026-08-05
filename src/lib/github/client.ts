@@ -170,16 +170,76 @@ export async function getRepository(
   );
 }
 
+/**
+ * A commit response carries at most 300 files; the remainder is only reachable
+ * through pagination, so keep requesting while new filenames appear.
+ */
 export async function getCommit(
   accessToken: string,
   owner: string,
   name: string,
   ref: string,
-) {
-  return githubFetch<GitHubCommitDetail>(
+  maxFilePages = 10,
+): Promise<GitHubCommitDetail> {
+  const base = `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/commits/${encodeURIComponent(ref)}`;
+  const detail = await githubFetch<GitHubCommitDetail>(
     accessToken,
-    `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/commits/${encodeURIComponent(ref)}`,
+    `${base}?per_page=100&page=1`,
   );
+  if (!detail.files || detail.files.length < 100) return detail;
+
+  const files = [...detail.files];
+  const seen = new Set(files.map((file) => file.filename));
+  for (let page = 2; page <= maxFilePages; page += 1) {
+    const next = await githubFetch<GitHubCommitDetail>(
+      accessToken,
+      `${base}?per_page=100&page=${page}`,
+    );
+    const fresh = (next.files ?? []).filter((file) => !seen.has(file.filename));
+    if (fresh.length === 0) break;
+    for (const file of fresh) {
+      seen.add(file.filename);
+      files.push(file);
+    }
+    if ((next.files?.length ?? 0) < 100) break;
+  }
+  return { ...detail, files };
+}
+
+export type CommitScan = {
+  commits: GitHubCommit[];
+  /** True when the repository had more commits than this scan could return. */
+  truncated: boolean;
+};
+
+/**
+ * Lists commits reachable from `head` but not from `base`, oldest first. This
+ * follows the commit graph rather than commit timestamps, so a fast-forward
+ * push of older commits is still reported.
+ */
+export async function listCommitsBetween(
+  accessToken: string,
+  owner: string,
+  name: string,
+  base: string,
+  head: string,
+  maxPages = 10,
+): Promise<CommitScan> {
+  const commits: GitHubCommit[] = [];
+  let total = 0;
+  for (let page = 1; page <= maxPages; page += 1) {
+    const comparison = await githubFetch<
+      GitHubComparison & { total_commits?: number }
+    >(
+      accessToken,
+      `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/compare/${encodeURIComponent(base)}...${encodeURIComponent(head)}?per_page=100&page=${page}`,
+    );
+    total = comparison.total_commits ?? comparison.commits.length;
+    if (comparison.commits.length === 0) break;
+    commits.push(...comparison.commits);
+    if (commits.length >= total) break;
+  }
+  return { commits, truncated: commits.length < total };
 }
 
 export async function listCommitsSince(
@@ -189,8 +249,9 @@ export async function listCommitsSince(
   branch: string,
   since: Date,
   maxPages = 10,
-): Promise<GitHubCommit[]> {
+): Promise<CommitScan> {
   const commits: GitHubCommit[] = [];
+  let truncated = false;
   for (let page = 1; page <= maxPages; page += 1) {
     const query = new URLSearchParams({
       sha: branch,
@@ -204,9 +265,22 @@ export async function listCommitsSince(
     );
     commits.push(...batch);
     if (batch.length < 100) break;
+    if (page === maxPages) truncated = true;
   }
-  return commits.reverse();
+  return { commits: commits.reverse(), truncated };
 }
+
+export type ReleaseScan = {
+  releases: GitHubRelease[];
+  /**
+   * False when the tracked release could not be found — it was deleted, or the
+   * history is longer than this scan. Replaying every release would flood
+   * subscribers, so callers resynchronize instead.
+   */
+  cursorFound: boolean;
+};
+
+const NO_RELEASE_CURSOR = "none";
 
 export async function listReleasesAfter(
   accessToken: string,
@@ -214,25 +288,40 @@ export async function listReleasesAfter(
   name: string,
   cursor: string,
   maxPages = 10,
-): Promise<GitHubRelease[]> {
+): Promise<ReleaseScan> {
   const releases: GitHubRelease[] = [];
-  let reachedCursor = false;
+  // "none" means no release existed when monitoring started, so everything
+  // found now is genuinely new.
+  let reachedCursor = cursor === NO_RELEASE_CURSOR;
+  let exhausted = false;
 
-  for (let page = 1; page <= maxPages && !reachedCursor; page += 1) {
+  for (let page = 1; page <= maxPages; page += 1) {
     const batch = await githubFetch<GitHubRelease[]>(
       accessToken,
       `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/releases?per_page=100&page=${page}`,
     );
+    let hitCursor = false;
     for (const release of batch) {
       if (String(release.id) === cursor) {
-        reachedCursor = true;
+        hitCursor = true;
         break;
       }
       if (!release.draft) releases.push(release);
     }
-    if (batch.length < 100) break;
+    if (hitCursor) {
+      reachedCursor = true;
+      break;
+    }
+    if (batch.length < 100) {
+      exhausted = true;
+      break;
+    }
   }
-  return releases.reverse();
+  if (cursor === NO_RELEASE_CURSOR && !exhausted) {
+    // History was longer than the scan; treat it as a resynchronization.
+    reachedCursor = false;
+  }
+  return { releases: releases.reverse(), cursorFound: reachedCursor };
 }
 
 export async function getLatestRelease(

@@ -5,9 +5,9 @@ import { requireRouteAdmin } from "@/lib/auth/session";
 import { config, isProduction } from "@/lib/config";
 import { randomToken } from "@/lib/crypto";
 import { db } from "@/lib/db";
-import { redirectWithMessage } from "@/lib/http";
+import { redirectWithMessage, routeHandler } from "@/lib/http";
 
-export async function GET(request: Request) {
+export const GET = routeHandler(async (request: Request) => {
   await requireRouteAdmin();
   if (!isProduction()) {
     return redirectWithMessage(
@@ -48,4 +48,4 @@ export async function GET(request: Request) {
   target.searchParams.set("code_challenge_method", "S256");
   target.searchParams.set("prompt", "select_account");
   return Response.redirect(target);
-}
+});

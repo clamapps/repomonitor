@@ -7,6 +7,7 @@ import { redirect } from "next/navigation";
 import { isProduction, isSuperAdminLogin } from "@/lib/config";
 import { hashToken, randomToken } from "@/lib/crypto";
 import { db } from "@/lib/db";
+import { HttpError } from "@/lib/http";
 
 const SESSION_COOKIE = "repomonitor_session";
 const SESSION_DAYS = 30;
@@ -70,7 +71,9 @@ export async function requireUser() {
 
 export async function requireRouteUser() {
   const user = await currentUser();
-  if (!user) throw new Response("Unauthorized", { status: 401 });
+  if (!user) {
+    throw new HttpError(401, "Please sign in to continue", "/");
+  }
   return user;
 }
 
@@ -83,7 +86,7 @@ export async function requireAdmin() {
 export async function requireRouteAdmin() {
   const user = await requireRouteUser();
   if (!isSuperAdminLogin(user.githubLogin)) {
-    throw new Response("Forbidden", { status: 403 });
+    throw new HttpError(403, "Forbidden");
   }
   return user;
 }

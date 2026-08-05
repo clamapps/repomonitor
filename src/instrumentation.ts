@@ -6,7 +6,18 @@ export async function register() {
   globalState.repoMonitorCron = true;
 
   const cron = await import("node-cron");
-  const { runPollingCycle } = await import("@/lib/polling/run");
+  const { pollIsOverdue, runPollingCycle } = await import("@/lib/polling/run");
+
+  // A restart spanning the scheduled time would otherwise skip a whole day.
+  const catchUp = setTimeout(async () => {
+    try {
+      if (await pollIsOverdue()) await runPollingCycle("scheduled");
+    } catch (error) {
+      console.error("Catch-up repository poll failed", error);
+    }
+  }, 60_000);
+  catchUp.unref?.();
+
   cron.schedule(
     process.env.POLL_CRON || "17 3 * * *",
     async () => {

@@ -22,6 +22,9 @@ matches.
 - Deduplicated notifications, crash recovery, retry handling, and configurable
   random delays between sends
 - GitHub notification addresses and custom addresses with email verification
+- Verification is confirmed by the signed-in account that requested it, so
+  opening the link alone — by a person or a mail security scanner — never
+  activates an address
 - Local `sendmail` delivery by default
 - Super-admin Google OAuth setup for a global Gmail API sender
 - Responsive account, subscription, condition, and admin screens

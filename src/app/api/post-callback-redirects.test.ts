@@ -28,6 +28,7 @@ const mocks = vi.hoisted(() => ({
   gmailSenderUpsert: vi.fn(),
   registerGitHubAppFromManifest: vi.fn(),
   requireRouteAdmin: vi.fn(),
+  requireRouteUser: vi.fn(),
   transaction: vi.fn<(callback: TransactionCallback) => Promise<unknown>>(),
   verifyEmailToken: vi.fn(),
 }));
@@ -46,6 +47,7 @@ vi.mock("@/lib/auth/session", () => ({
   createSession: mocks.createSession,
   destroySession: mocks.destroySession,
   requireRouteAdmin: mocks.requireRouteAdmin,
+  requireRouteUser: mocks.requireRouteUser,
 }));
 
 vi.mock("@/lib/config", () => ({
@@ -94,7 +96,10 @@ import { GET as gmailCallback } from "@/app/api/admin/gmail/callback/route";
 import { GET as githubAppManifestCallback } from "@/app/api/admin/github-app/manifest/callback/route";
 import { GET as githubCallback } from "@/app/api/auth/github/callback/route";
 import { POST as logout } from "@/app/api/auth/logout/route";
-import { GET as verifyEmail } from "@/app/api/email/verify/route";
+import {
+  GET as verifyEmailLink,
+  POST as confirmEmail,
+} from "@/app/api/email/verify/route";
 import { redirectWithMessage } from "@/lib/http";
 
 function redirectLocation(response: Response): URL {
@@ -279,16 +284,37 @@ describe("redirects behind a reverse proxy", () => {
     expect(redirectLocation(response).href).toBe(`${PUBLIC_APP_URL}/`);
   });
 
-  it("returns email verification to the public settings URL", async () => {
-    mocks.verifyEmailToken.mockResolvedValue("person@example.com");
-
-    const response = await verifyEmail(
+  it("does not verify on a link visit, forwarding to the public confirm page", async () => {
+    const response = await verifyEmailLink(
       new Request(
         `${INTERNAL_APP_URL}/api/email/verify?token=verification-token`,
       ),
     );
 
-    expect(mocks.verifyEmailToken).toHaveBeenCalledWith("verification-token");
+    // A scanner or mail client prefetching the link must not confirm it.
+    expect(mocks.verifyEmailToken).not.toHaveBeenCalled();
+    const location = redirectLocation(response);
+    expect(location.origin).toBe(PUBLIC_APP_URL);
+    expect(location.pathname).toBe("/verify-email");
+    expect(location.searchParams.get("token")).toBe("verification-token");
+  });
+
+  it("returns a confirmed email to the public settings URL", async () => {
+    mocks.verifyEmailToken.mockResolvedValue("person@example.com");
+    mocks.requireRouteUser.mockResolvedValue({ id: "user-1" });
+
+    const response = await confirmEmail(
+      new Request(`${INTERNAL_APP_URL}/api/email/verify`, {
+        method: "POST",
+        headers: { Origin: PUBLIC_APP_URL },
+        body: new URLSearchParams({ token: "verification-token" }),
+      }),
+    );
+
+    expect(mocks.verifyEmailToken).toHaveBeenCalledWith(
+      "verification-token",
+      "user-1",
+    );
     const location = redirectLocation(response);
     expect(location.origin).toBe(PUBLIC_APP_URL);
     expect(location.pathname).toBe("/settings");

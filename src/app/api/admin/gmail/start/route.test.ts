@@ -24,10 +24,16 @@ vi.mock("@/lib/config", () => ({
   googleOAuthConfigured: () => true,
 }));
 
-vi.mock("@/lib/http", () => ({
-  assertSameOrigin: mocks.assertSameOrigin,
-  redirectWithMessage: vi.fn(),
-}));
+vi.mock("@/lib/http", async () => {
+  const actual = await vi.importActual<typeof import("@/lib/http")>(
+    "@/lib/http",
+  );
+  return {
+    ...actual,
+    assertSameOrigin: mocks.assertSameOrigin,
+    redirectWithMessage: vi.fn(),
+  };
+});
 
 import { POST } from "@/app/api/admin/gmail/start/route";
 

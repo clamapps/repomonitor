@@ -107,6 +107,13 @@ export async function createSubscription(
       : null;
 
     return db.$transaction(async (tx) => {
+      const previousRepository = await tx.repository.findUnique({
+        where: { fullName: githubRepo.full_name },
+      });
+      const visibilityChanged =
+        previousRepository !== null &&
+        previousRepository.isPrivate !== githubRepo.private;
+
       const repository = await tx.repository.upsert({
         where: { fullName: githubRepo.full_name },
         update: {
@@ -127,6 +134,55 @@ export async function createSubscription(
           htmlUrl: githubRepo.html_url,
         },
       });
+
+      // Flipping visibility moves polling between the shared repository cursor
+      // and per-subscription cursors, which would silently strand everyone
+      // already subscribed. Surface it to them instead.
+      if (visibilityChanged) {
+        const stranded = await tx.subscription.findMany({
+          where: {
+            repositoryId: repository.id,
+            userId: { not: userId },
+            enabled: true,
+            errorAt: null,
+          },
+          select: { id: true },
+        });
+        const message = githubRepo.private
+          ? "This repository is now private. Remove and add the subscription again so each account can authorize private polling."
+          : "This repository is now public. Remove and add the subscription again to switch to shared GitHub App polling.";
+        const errorAt = new Date();
+        for (const item of stranded) {
+          await tx.subscription.update({
+            where: { id: item.id },
+            data: { errorCode: "VISIBILITY_CHANGED", errorMessage: message, errorAt },
+          });
+          await tx.subscriptionErrorAlert.upsert({
+            where: { subscriptionId: item.id },
+            update: {
+              errorCode: "VISIBILITY_CHANGED",
+              message,
+              status: "PENDING",
+              attempts: 0,
+              lastError: null,
+              sentAt: null,
+            },
+            create: {
+              subscriptionId: item.id,
+              errorCode: "VISIBILITY_CHANGED",
+              message,
+            },
+          });
+        }
+      }
+
+      const previousSubscription = await tx.subscription.findUnique({
+        where: { userId_repositoryId: { userId, repositoryId: repository.id } },
+      });
+      // A subscription that was switched off has a frozen cursor; resuming from
+      // it would replay the entire backlog.
+      const resumingAfterPause =
+        previousSubscription !== null && !previousSubscription.enabled;
 
       const subscription = await tx.subscription.upsert({
         where: {
@@ -154,6 +210,15 @@ export async function createSubscription(
         });
 
         const releaseCursor = latestRelease ? String(latestRelease.id) : "none";
+        const freshCursor = {
+          cursor: type === EventType.COMMIT ? head.sha : releaseCursor,
+          lastCommitSha:
+            type === EventType.COMMIT
+              ? head.sha
+              : (latestReleaseCommit?.sha ?? head.sha),
+          lastSuccessfulAt: new Date(),
+          lastError: null,
+        };
         if (githubRepo.private) {
           await tx.subscriptionPollCursor.upsert({
             where: {
@@ -162,7 +227,7 @@ export async function createSubscription(
                 eventType: type,
               },
             },
-            update: {},
+            update: resumingAfterPause ? freshCursor : {},
             create: {
               subscriptionId: subscription.id,
               eventType: type,
@@ -209,9 +274,14 @@ export async function updateSubscriptionEvents(
   if (eventTypes.length === 0) throw new Error("At least one event is required");
   const subscription = await db.subscription.findFirst({
     where: { id: subscriptionId, userId },
-    include: { repository: true },
+    include: { repository: true, events: true },
   });
   if (!subscription) throw new Error("Subscription not found");
+  const previouslyEnabled = new Set(
+    subscription.events
+      .filter((event) => event.enabled)
+      .map((event) => event.type),
+  );
 
   await withRepositoryReadToken(
     userId,
@@ -248,6 +318,23 @@ export async function updateSubscriptionEvents(
           create: { subscriptionId, type, enabled },
         });
         if (enabled) {
+          // Re-enabling an event resumes from a frozen cursor, so restart it
+          // from the current head instead of replaying the whole backlog.
+          const resumingAfterPause = !previouslyEnabled.has(type);
+          const freshCursor = {
+            cursor:
+              type === EventType.COMMIT
+                ? head.sha
+                : latestRelease
+                  ? String(latestRelease.id)
+                  : "none",
+            lastCommitSha:
+              type === EventType.COMMIT
+                ? head.sha
+                : (releaseCommit?.sha ?? head.sha),
+            lastSuccessfulAt: new Date(),
+            lastError: null,
+          };
           if (subscription.repository.isPrivate) {
             await tx.subscriptionPollCursor.upsert({
               where: {
@@ -256,7 +343,7 @@ export async function updateSubscriptionEvents(
                   eventType: type,
                 },
               },
-              update: {},
+              update: resumingAfterPause ? freshCursor : {},
               create: {
                 subscriptionId,
                 eventType: type,

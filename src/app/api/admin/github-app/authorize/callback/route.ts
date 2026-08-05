@@ -1,9 +1,9 @@
 import { consumeOAuthState } from "@/lib/auth/oauth-state";
 import { requireRouteAdmin } from "@/lib/auth/session";
 import { authorizeGitHubAppForPublicPolling } from "@/lib/github/app";
-import { redirectWithMessage } from "@/lib/http";
+import { redirectWithMessage, routeHandler } from "@/lib/http";
 
-export async function GET(request: Request) {
+export const GET = routeHandler(async (request: Request) => {
   const user = await requireRouteAdmin();
   const url = new URL(request.url);
   const state = await consumeOAuthState(
@@ -51,4 +51,4 @@ export async function GET(request: Request) {
         : "GitHub App authorization could not be completed.",
     );
   }
-}
+});

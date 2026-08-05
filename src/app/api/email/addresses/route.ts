@@ -1,10 +1,13 @@
 import { ZodError } from "zod";
 
 import { requireRouteUser } from "@/lib/auth/session";
-import { assertSameOrigin, redirectWithMessage } from "@/lib/http";
-import { requestEmailVerification } from "@/lib/email/verification";
+import { assertSameOrigin, redirectWithMessage, routeHandler } from "@/lib/http";
+import {
+  EmailVerificationError,
+  requestEmailVerification,
+} from "@/lib/email/verification";
 
-export async function POST(request: Request) {
+export const POST = routeHandler(async (request: Request) => {
   assertSameOrigin(request);
   const user = await requireRouteUser();
   const form = await request.formData();
@@ -17,12 +20,25 @@ export async function POST(request: Request) {
       "Verification email sent",
     );
   } catch (error) {
-    const message =
-      error instanceof ZodError
-        ? "Enter a valid email address"
-        : error instanceof Error
-          ? error.message
-          : "Unable to send verification";
-    return redirectWithMessage(request, "/settings", "error", message);
+    if (error instanceof ZodError) {
+      return redirectWithMessage(
+        request,
+        "/settings",
+        "error",
+        "Enter a valid email address",
+      );
+    }
+    // Only messages written for users are shown; delivery and configuration
+    // failures would otherwise leak internal detail into the browser.
+    if (error instanceof EmailVerificationError) {
+      return redirectWithMessage(request, "/settings", "error", error.message);
+    }
+    console.error("Failed to send a verification email", error);
+    return redirectWithMessage(
+      request,
+      "/settings",
+      "error",
+      "Unable to send the verification email. Try again later.",
+    );
   }
-}
+});

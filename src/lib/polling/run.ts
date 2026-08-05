@@ -31,9 +31,13 @@ import {
   getCommit,
   getFileContent,
   getRepository,
+  listCommitsBetween,
   listCommitsSince,
   listReleasesAfter,
   permanentGitHubAccessFailure,
+  GitHubApiError,
+  type CommitScan,
+  type GitHubCommit,
 } from "@/lib/github/client";
 import { withPublicRepositoryToken } from "@/lib/github/app";
 import {
@@ -280,6 +284,50 @@ async function createNotification(
   }
 }
 
+const COMMIT_SHA_PATTERN = /^[0-9a-f]{40}$/i;
+
+/**
+ * Prefers the compare API so the commit graph decides what is new; commit
+ * timestamps miss fast-forward pushes of older branches. Falls back to a dated
+ * listing when the stored cursor is no longer reachable (rewritten history).
+ */
+async function commitsToProcess(
+  work: CursorWork,
+  token: string,
+  head: GitHubCommit,
+): Promise<CommitScan> {
+  const { repository } = work;
+  if (COMMIT_SHA_PATTERN.test(work.cursor)) {
+    try {
+      return await listCommitsBetween(
+        token,
+        repository.owner,
+        repository.name,
+        work.cursor,
+        head.sha,
+      );
+    } catch (error) {
+      if (!(error instanceof GitHubApiError) || error.status !== 404) throw error;
+    }
+  }
+
+  const since =
+    work.lastSuccessfulAt ?? new Date(Date.now() - 25 * 60 * 60 * 1000);
+  const scan = await listCommitsSince(
+    token,
+    repository.owner,
+    repository.name,
+    repository.defaultBranch,
+    since,
+  );
+  let commits = scan.commits;
+  const cursorIndex = commits.findIndex((commit) => commit.sha === work.cursor);
+  if (cursorIndex >= 0) commits = commits.slice(cursorIndex + 1);
+  commits = commits.filter((commit) => commit.sha !== work.cursor);
+  if (!commits.some((commit) => commit.sha === head.sha)) commits.push(head);
+  return { commits, truncated: scan.truncated };
+}
+
 async function pollCommits(work: CursorWork, token: string): Promise<number> {
   const { repository } = work;
   const head = await getCommit(
@@ -293,23 +341,14 @@ async function pollCommits(work: CursorWork, token: string): Promise<number> {
     return 0;
   }
 
-  const since =
-    work.lastSuccessfulAt ?? new Date(Date.now() - 25 * 60 * 60 * 1000);
-  let commits = await listCommitsSince(
-    token,
-    repository.owner,
-    repository.name,
-    repository.defaultBranch,
-    since,
-  );
-  const cursorIndex = commits.findIndex((commit) => commit.sha === work.cursor);
-  if (cursorIndex >= 0) commits = commits.slice(cursorIndex + 1);
-  commits = commits.filter((commit) => commit.sha !== work.cursor);
-  if (!commits.some((commit) => commit.sha === head.sha)) commits.push(head);
+  const scan = await commitsToProcess(work, token, head);
+  const truncationNote = scan.truncated
+    ? "More commits were published than a single poll can read; the oldest ones in this window were skipped."
+    : null;
 
   const conditions = eventConditions(work);
   let queued = 0;
-  for (const commit of commits) {
+  for (const commit of scan.commits) {
     const detail = await getCommit(
       token,
       repository.owner,
@@ -345,20 +384,48 @@ async function pollCommits(work: CursorWork, token: string): Promise<number> {
       detail.html_url,
       files,
     );
+    // Advance per commit: line-condition state is already persisted, so a
+    // later failure must not replay this commit against the new state.
+    await markCursorSuccess(work, detail.sha, detail.sha);
   }
-  await markCursorSuccess(work, head.sha, head.sha);
+  await markCursorSuccess(work, head.sha, head.sha, truncationNote);
   return queued;
 }
 
 async function pollReleases(work: CursorWork, token: string): Promise<number> {
   const { repository } = work;
-  const releases = await listReleasesAfter(
+  const scan = await listReleasesAfter(
     token,
     repository.owner,
     repository.name,
     work.cursor,
   );
-  if (releases.length === 0) {
+
+  if (!scan.cursorFound) {
+    // The release we were tracking is gone (deleted, or beyond the scan
+    // window). Replaying the history would email every past release, so adopt
+    // the newest release as the new baseline instead.
+    const newest = scan.releases[scan.releases.length - 1];
+    if (!newest) {
+      await markCursorSuccess(work, work.cursor, work.lastCommitSha);
+      return 0;
+    }
+    const newestCommit = await getCommit(
+      token,
+      repository.owner,
+      repository.name,
+      newest.tag_name,
+    ).catch(() => null);
+    await markCursorSuccess(
+      work,
+      String(newest.id),
+      newestCommit?.sha ?? work.lastCommitSha,
+      "The previously notified release is no longer available; monitoring resumed from the newest release.",
+    );
+    return 0;
+  }
+
+  if (scan.releases.length === 0) {
     await markCursorSuccess(work, work.cursor, work.lastCommitSha);
     return 0;
   }
@@ -366,8 +433,7 @@ async function pollReleases(work: CursorWork, token: string): Promise<number> {
   const conditions = eventConditions(work);
   let queued = 0;
   let previousCommit = work.lastCommitSha;
-  let cursor = work.cursor;
-  for (const release of releases) {
+  for (const release of scan.releases) {
     const releaseCommit = await getCommit(
       token,
       repository.owner,
@@ -418,10 +484,10 @@ async function pollReleases(work: CursorWork, token: string): Promise<number> {
       release.html_url,
       files,
     );
-    cursor = String(release.id);
     previousCommit = releaseCommit.sha;
+    // Advance per release so a later failure does not replay this one.
+    await markCursorSuccess(work, String(release.id), previousCommit);
   }
-  await markCursorSuccess(work, cursor, previousCommit);
   return queued;
 }
 
@@ -429,13 +495,16 @@ async function markCursorSuccess(
   work: CursorWork,
   cursor: string,
   lastCommitSha?: string | null,
+  note: string | null = null,
 ) {
   const data = {
     cursor,
     lastCommitSha,
     lastSuccessfulAt: new Date(),
-    lastError: null,
+    lastError: note,
   };
+  work.cursor = cursor;
+  if (lastCommitSha !== undefined) work.lastCommitSha = lastCommitSha;
   if (work.kind === "repository") {
     await db.repoPollCursor.update({ where: { id: work.id }, data });
   } else {
@@ -614,14 +683,18 @@ async function deliverNotifications(): Promise<number> {
     const subscription = claimed[0].condition.subscriptionEvent.subscription;
     const address = subscription.user.notificationEmail;
     if (!address?.verifiedAt) {
+      // Hold rather than fail: the user can still select a verified address,
+      // and FAILED is terminal. The claim's attempt is given back so this
+      // wait does not consume the delivery retry budget.
       await db.notification.updateMany({
         where: {
           id: { in: claimed.map((notification) => notification.id) },
           status: NotificationStatus.SENDING,
         },
         data: {
-          status: NotificationStatus.FAILED,
-          lastError: "No verified notification email is selected",
+          status: NotificationStatus.PENDING,
+          attempts: { decrement: 1 },
+          lastError: "Waiting for a verified notification email to be selected",
         },
       });
       continue;
@@ -719,8 +792,9 @@ async function deliverSubscriptionErrorAlerts(): Promise<number> {
       await db.subscriptionErrorAlert.update({
         where: { id: alert.id },
         data: {
-          status: NotificationStatus.FAILED,
-          lastError: "No verified notification email is selected",
+          status: NotificationStatus.PENDING,
+          attempts: { decrement: 1 },
+          lastError: "Waiting for a verified notification email to be selected",
         },
       });
       continue;
@@ -768,9 +842,31 @@ async function deliverSubscriptionErrorAlerts(): Promise<number> {
   return sent;
 }
 
+const LEASE_DURATION_MS = 2 * 60 * 60 * 1000;
+const LEASE_HEARTBEAT_MS = 5 * 60 * 1000;
+
+/**
+ * Keeps the lease from expiring under a long run, which would otherwise let a
+ * second poller start and interleave line-condition state updates.
+ */
+function startLeaseHeartbeat(owner: string): () => void {
+  const timer = setInterval(() => {
+    void db.pollLease
+      .updateMany({
+        where: { id: "daily", owner },
+        data: { leaseUntil: new Date(Date.now() + LEASE_DURATION_MS) },
+      })
+      .catch((error) => {
+        console.error("Failed to renew the polling lease", error);
+      });
+  }, LEASE_HEARTBEAT_MS);
+  timer.unref?.();
+  return () => clearInterval(timer);
+}
+
 async function acquireLease(owner: string): Promise<boolean> {
   const now = new Date();
-  const leaseUntil = new Date(Date.now() + 2 * 60 * 60 * 1000);
+  const leaseUntil = new Date(Date.now() + LEASE_DURATION_MS);
   try {
     await db.pollLease.create({
       data: { id: "daily", owner, leaseUntil },
@@ -791,6 +887,16 @@ async function acquireLease(owner: string): Promise<boolean> {
   return claimed.count === 1;
 }
 
+/**
+ * True when the daily poll was missed — typically the process was down at the
+ * scheduled time, which otherwise silently costs subscribers a full day.
+ */
+export async function pollIsOverdue(): Promise<boolean> {
+  const lease = await db.pollLease.findUnique({ where: { id: "daily" } });
+  if (!lease?.lastRunAt) return false;
+  return lease.lastRunAt.getTime() < Date.now() - 24 * 60 * 60 * 1000;
+}
+
 export async function runPollingCycle(
   source: "scheduled" | "manual",
 ): Promise<PollResult> {
@@ -807,6 +913,7 @@ export async function runPollingCycle(
   };
   if (!(await acquireLease(owner))) return result;
   result.acquired = true;
+  const stopHeartbeat = startLeaseHeartbeat(owner);
 
   try {
     const publicCursorRecords = await db.repoPollCursor.findMany({
@@ -981,6 +1088,7 @@ export async function runPollingCycle(
     result.subscriptionAlertsSent = await deliverSubscriptionErrorAlerts();
     return result;
   } finally {
+    stopHeartbeat();
     await db.pollLease.updateMany({
       where: { id: "daily", owner },
       data: {

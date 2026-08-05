@@ -4,6 +4,7 @@ import { config } from "@/lib/config";
 import { encryptSecret } from "@/lib/crypto";
 import { db } from "@/lib/db";
 import { clearGoogleAccessTokenCache } from "@/lib/email/sender";
+import { routeHandler } from "@/lib/http";
 
 const GMAIL_SEND_SCOPE = "https://www.googleapis.com/auth/gmail.send";
 
@@ -16,7 +17,7 @@ function settingsRedirect(
   return Response.redirect(target, 303);
 }
 
-export async function GET(request: Request) {
+export const GET = routeHandler(async (request: Request) => {
   const admin = await requireRouteAdmin();
   const url = new URL(request.url);
   const state = await consumeOAuthState("google", url.searchParams.get("state"));
@@ -105,4 +106,4 @@ export async function GET(request: Request) {
     "notice",
     `Google sender connected as ${profile.email}`,
   );
-}
+});

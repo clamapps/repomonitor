@@ -29,9 +29,74 @@ export class GitHubAuthorizationError extends Error {
   }
 }
 
-async function refreshCredential(credential: GitHubCredential): Promise<string> {
-  if (!credential.refreshTokenEncrypted) {
-    return decryptSecret(credential.accessTokenEncrypted);
+const REFRESH_SKEW_MS = 5 * 60 * 1000;
+
+/**
+ * OAuth error codes that mean the refresh token itself is dead. Anything else
+ * (5xx, network failure, an unrecognized code) is treated as transient so a
+ * blip at GitHub does not permanently disable a working authorization.
+ */
+const TERMINAL_REFRESH_ERRORS = new Set([
+  "bad_refresh_token",
+  "bad_verification_code",
+  "incorrect_client_credentials",
+  "invalid_grant",
+  "invalid_client",
+  "unauthorized_client",
+]);
+
+function refreshFailureIsTerminal(
+  status: number,
+  error: string | undefined,
+): boolean {
+  if (error) return TERMINAL_REFRESH_ERRORS.has(error);
+  return status === 400 || status === 401 || status === 403;
+}
+
+/**
+ * GitHub rotates refresh tokens on use, so two concurrent refreshes would make
+ * the loser fail with a token the winner already replaced. Refreshes for a
+ * credential are collapsed into one in-flight request per process.
+ */
+const inFlightRefreshes = new Map<string, Promise<string>>();
+
+function refreshCredential(
+  credential: GitHubCredential,
+  staleAccessToken?: string,
+): Promise<string> {
+  const pending = inFlightRefreshes.get(credential.id);
+  if (pending) return pending;
+
+  const refresh = performRefresh(credential.id, staleAccessToken).finally(() => {
+    inFlightRefreshes.delete(credential.id);
+  });
+  inFlightRefreshes.set(credential.id, refresh);
+  return refresh;
+}
+
+async function performRefresh(
+  credentialId: string,
+  staleAccessToken?: string,
+): Promise<string> {
+  // Re-read rather than trusting the caller's snapshot: another request may
+  // have already rotated this credential while we waited.
+  const credential = await db.gitHubCredential.findUnique({
+    where: { id: credentialId },
+  });
+  if (!credential || credential.invalidAt) {
+    throw new GitHubAuthorizationError();
+  }
+  const storedAccessToken = decryptSecret(credential.accessTokenEncrypted);
+  if (!credential.refreshTokenEncrypted) return storedAccessToken;
+
+  if (staleAccessToken !== undefined) {
+    // Someone else refreshed after our token was issued; use theirs.
+    if (storedAccessToken !== staleAccessToken) return storedAccessToken;
+  } else if (
+    credential.expiresAt &&
+    credential.expiresAt.getTime() > Date.now() + REFRESH_SKEW_MS
+  ) {
+    return storedAccessToken;
   }
 
   const body = new URLSearchParams({
@@ -48,15 +113,20 @@ async function refreshCredential(credential: GitHubCredential): Promise<string> 
     },
     body,
   });
-  const result = (await response.json()) as RefreshResponse;
+  const result = (await response
+    .json()
+    .catch(() => ({}) as RefreshResponse)) as RefreshResponse;
   if (!response.ok || !result.access_token) {
+    const message =
+      result.error_description ?? result.error ?? "GitHub token refresh failed";
+    if (!refreshFailureIsTerminal(response.status, result.error)) {
+      throw new Error(`GitHub token refresh is temporarily failing: ${message}`);
+    }
     await db.gitHubCredential.update({
       where: { id: credential.id },
       data: { invalidAt: new Date() },
     });
-    throw new GitHubAuthorizationError(
-      result.error_description ?? result.error ?? "GitHub token refresh failed",
-    );
+    throw new GitHubAuthorizationError(message);
   }
 
   await db.gitHubCredential.update({
@@ -84,7 +154,7 @@ export async function accessTokenForCredential(
 ): Promise<string> {
   const expiresSoon =
     credential.expiresAt &&
-    credential.expiresAt.getTime() <= Date.now() + 5 * 60 * 1000;
+    credential.expiresAt.getTime() <= Date.now() + REFRESH_SKEW_MS;
   if (expiresSoon) return refreshCredential(credential);
   return decryptSecret(credential.accessTokenEncrypted);
 }
@@ -104,7 +174,7 @@ async function withCredentialToken<T>(
   credential: GitHubCredential,
   operation: (accessToken: string) => Promise<T>,
 ): Promise<T> {
-  let token = await accessTokenForCredential(credential);
+  const token = await accessTokenForCredential(credential);
   try {
     return await operation(token);
   } catch (error) {
@@ -113,8 +183,8 @@ async function withCredentialToken<T>(
       error.status === 401 &&
       credential.refreshTokenEncrypted
     ) {
-      token = await refreshCredential(credential);
-      return operation(token);
+      const refreshed = await refreshCredential(credential, token);
+      if (refreshed !== token) return operation(refreshed);
     }
     throw error;
   }

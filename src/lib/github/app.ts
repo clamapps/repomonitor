@@ -187,7 +187,22 @@ export async function authorizeGitHubAppForPublicPolling(
   return githubUser.login;
 }
 
-async function publicPollingToken(): Promise<string> {
+/**
+ * The shared app refresh token is single-use, so overlapping poll runs must not
+ * exchange it concurrently; the loser would fail with an already-rotated token.
+ */
+let inFlightPublicToken: Promise<string> | undefined;
+
+function publicPollingToken(): Promise<string> {
+  if (inFlightPublicToken) return inFlightPublicToken;
+  const pending = loadPublicPollingToken().finally(() => {
+    inFlightPublicToken = undefined;
+  });
+  inFlightPublicToken = pending;
+  return pending;
+}
+
+async function loadPublicPollingToken(): Promise<string> {
   let app = await db.gitHubAppConfiguration.findUnique({
     where: { id: "global" },
   });

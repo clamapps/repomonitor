@@ -3,9 +3,9 @@ import { z } from "zod";
 import { createOAuthState } from "@/lib/auth/oauth-state";
 import { requireRouteAdmin } from "@/lib/auth/session";
 import { config, googleOAuthConfigured } from "@/lib/config";
-import { assertSameOrigin, redirectWithMessage } from "@/lib/http";
+import { assertSameOrigin, redirectWithMessage, routeHandler } from "@/lib/http";
 
-export async function POST(request: Request) {
+export const POST = routeHandler(async (request: Request) => {
   assertSameOrigin(request);
   await requireRouteAdmin();
   if (!googleOAuthConfigured()) {
@@ -50,4 +50,4 @@ export async function POST(request: Request) {
   authorize.searchParams.set("login_hint", parsed.data);
   authorize.searchParams.set("state", state);
   return Response.redirect(authorize, 303);
-}
+});

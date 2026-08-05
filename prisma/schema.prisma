@@ -46,6 +46,7 @@ model User {
   githubCredential    GitHubCredential?
   sessions            Session[]
   subscriptions       Subscription[]
+  verificationSends   EmailVerificationSend[]
   createdAt           DateTime          @default(now())
   updatedAt           DateTime          @updatedAt
 }
@@ -91,6 +92,21 @@ model EmailAddress {
 
   @@unique([userId, email])
   @@index([verificationHash])
+}
+
+/// One row per verification email sent, so throttles are measured against
+/// actual sends rather than inferred from mutable address rows. Rows outside
+/// the throttle window are pruned when new sends are recorded.
+model EmailVerificationSend {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  email     String
+  createdAt DateTime @default(now())
+
+  @@index([userId, createdAt])
+  @@index([userId, email, createdAt])
+  @@index([createdAt])
 }
 
 model Repository {

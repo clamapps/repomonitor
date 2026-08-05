@@ -1,8 +1,8 @@
 import { requireRouteUser } from "@/lib/auth/session";
 import { db } from "@/lib/db";
-import { assertSameOrigin, redirectWithMessage } from "@/lib/http";
+import { assertSameOrigin, redirectWithMessage, routeHandler } from "@/lib/http";
 
-export async function POST(request: Request) {
+export const POST = routeHandler(async (request: Request) => {
   assertSameOrigin(request);
   const user = await requireRouteUser();
   const form = await request.formData();
@@ -31,4 +31,4 @@ export async function POST(request: Request) {
     "notice",
     "Notification email updated",
   );
-}
+});
